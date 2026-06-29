@@ -1,7 +1,7 @@
-import { env } from "../config/env.js";
-import { Logger } from "../shared/logger.js";
-import { PowerFeeClient, type PowerFeeBalance, type PowerFeeLocation } from "./power-fee-client.js";
-import { TelegramNotifier } from "./telegram-notifier.js";
+import { env } from "../../config/env.js";
+import { Logger } from "../../shared/logger.js";
+import { TelegramNotifier } from "../telegram/notifier.js";
+import { PowerFeeClient, type PowerFeeBalance, type PowerFeeLocation } from "./client.js";
 
 const MIN_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_INTERVAL_MS = 60 * 60 * 1000;

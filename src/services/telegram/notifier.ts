@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Telegraf } from "telegraf";
-import { HttpError } from "../shared/http-error.js";
-import type { Logger } from "../shared/logger.js";
+import { HttpError } from "../../shared/error.js";
+import type { Logger } from "../../shared/logger.js";
 
 export type PowerFeeNotification = {
   balance: number;
@@ -30,7 +30,7 @@ export type TelegramStatusConfig = {
 
 type BalanceProvider = () => Promise<number>;
 
-const SUBSCRIBER_STORE_PATH = path.join(process.cwd(), ".cache", "telegram-subscribers.json");
+const SUBSCRIBER_STORE_PATH = path.join(process.cwd(), ".cache", "telegram", "subscribers.json");
 
 function formatAmount(value: number): string {
   return value.toFixed(2);

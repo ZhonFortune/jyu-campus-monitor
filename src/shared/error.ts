@@ -1,6 +1,16 @@
 import type { ErrorRequestHandler } from "express";
-import { HttpError } from "../shared/http-error.js";
-import type { Logger } from "../shared/logger.js";
+import type { Logger } from "./logger.js";
+
+export class HttpError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+
+  constructor(statusCode: number, code: string, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
 
 type ErrorResponse = {
   error: {

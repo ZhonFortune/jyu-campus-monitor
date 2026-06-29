@@ -2,13 +2,11 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { env } from "./config/env.js";
-import { createErrorHandler } from "./middleware/error-handler.js";
-import { createHttpLogger } from "./middleware/http-logger.js";
 import { healthRouter } from "./routes/health.js";
-import { createPowerFeeRouter } from "./routes/power-fee.js";
-import { HttpError } from "./shared/http-error.js";
-import { Logger } from "./shared/logger.js";
-import { PowerFeeMonitor } from "./services/power-fee-monitor.js";
+import { createPowerFeeRouter } from "./routes/powerfee.js";
+import { createErrorHandler, HttpError } from "./shared/error.js";
+import { createHttpLogger, Logger } from "./shared/logger.js";
+import { PowerFeeMonitor } from "./services/powerfee/monitor.js";
 
 export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel)) {
   const app = express();

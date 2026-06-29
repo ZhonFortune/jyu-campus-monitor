@@ -1,8 +1,8 @@
-import { env } from "../config/env.js";
-import { Logger } from "../shared/logger.js";
-import { PowerFeeClient } from "./power-fee-client.js";
-import { PowerFeeMonitor } from "./power-fee-monitor.js";
-import { TelegramNotifier } from "./telegram-notifier.js";
+import { env } from "../../config/env.js";
+import { Logger } from "../../shared/logger.js";
+import { TelegramNotifier } from "../telegram/notifier.js";
+import { PowerFeeClient } from "./client.js";
+import { PowerFeeMonitor } from "./monitor.js";
 
 export function createPowerFeeRuntime(logger = new Logger(env.logLevel)) {
   const telegramNotifier = new TelegramNotifier(

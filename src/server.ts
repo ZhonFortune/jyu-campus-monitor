@@ -1,7 +1,7 @@
 import { env } from "./config/env.js";
 import { createApp } from "./app.js";
 import { Logger } from "./shared/logger.js";
-import { createPowerFeeRuntime } from "./services/power-fee-runtime.js";
+import { createPowerFeeRuntime } from "./services/powerfee/runtime.js";
 
 const bootstrapLogger = new Logger(env.logLevel);
 const { powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime(bootstrapLogger);

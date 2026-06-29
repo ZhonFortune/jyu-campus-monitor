@@ -7,7 +7,7 @@
   },
   "crons": [
     {
-      "path": "/power-fee/cron",
+      "path": "/powerfee/cron",
       "schedule": "*/30 * * * *"
     }
   ],

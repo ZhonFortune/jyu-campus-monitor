@@ -1,8 +1,8 @@
 import { Router, type Request } from "express";
 import { env } from "../config/env.js";
-import { HttpError } from "../shared/http-error.js";
-import { PowerFeeMonitor } from "../services/power-fee-monitor.js";
-import type { PowerFeeLocation } from "../services/power-fee-client.js";
+import { HttpError } from "../shared/error.js";
+import { PowerFeeMonitor } from "../services/powerfee/monitor.js";
+import type { PowerFeeLocation } from "../services/powerfee/client.js";
 
 type ManualCheckBody = {
   accessToken?: unknown;
@@ -66,7 +66,7 @@ function buildLocationOverride(body: ManualCheckBody | undefined): Partial<Power
 export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
   const router = Router();
 
-  router.post("/power-fee/fetch", async (request, response, next) => {
+  router.post("/powerfee/fetch", async (request, response, next) => {
     try {
       const body = request.body as ManualCheckBody | undefined;
       const accessToken = readAccessToken(request, body);
@@ -98,7 +98,7 @@ export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
     }
   });
 
-  router.get("/power-fee/cron", async (request, response, next) => {
+  router.get("/powerfee/cron", async (request, response, next) => {
     try {
       if (!env.cronSecret) {
         throw new HttpError(503, "CRON_SECRET_NOT_CONFIGURED", "定时任务密钥未配置。");

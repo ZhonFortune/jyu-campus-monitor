@@ -1,6 +1,6 @@
-import { env } from "../config/env.js";
-import { HttpError } from "../shared/http-error.js";
-import type { Logger } from "../shared/logger.js";
+import { env } from "../../config/env.js";
+import { HttpError } from "../../shared/error.js";
+import type { Logger } from "../../shared/logger.js";
 
 const BALANCE_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getBalance";
 const ROOM_INFO_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getRoomInfo";
