@@ -1,0 +1,208 @@
+# =========================
+# 通用忽略规则
+# =========================
+
+# 系统文件
+__MACOSX/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 日志文件
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.orig
+
+# 环境变量 / 敏感信息
+.env
+*.local
+*.secret
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+*.code-workspace
+
+# 调试 / 测试
+coverage/
+.nyc_output/
+*.lcov
+
+# 构建输出
+dist/
+build/
+out/
+release/
+debug/
+
+# 缓存
+.cache/
+.cache-loader/
+.tmp/
+temp/
+.npm-cache/
+
+# 压缩包
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# =========================
+# Node.js / 前端
+# =========================
+node_modules/
+jspm_packages/
+package-lock.json
+.pnpm-store/
+
+.next/
+.nuxt/
+.svelte-kit/
+.storybook/
+
+*.tsbuildinfo
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+*.egg
+*.egg-info/
+
+.venv/
+venv/
+ENV/
+env/
+
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# Java / JVM
+# =========================
+*.class
+*.jar
+*.war
+*.ear
+
+target/
+.gradle/
+
+# =========================
+# Go
+# =========================
+bin/
+pkg/
+
+# =========================
+# Rust
+# =========================
+target/
+Cargo.lock
+
+# =========================
+# PHP
+# =========================
+vendor/
+composer.lock
+
+# =========================
+# Ruby
+# =========================
+.bundle/
+vendor/bundle/
+*.gem
+
+# =========================
+# .NET / C#
+# =========================
+bin/
+obj/
+*.user
+*.suo
+*.cache
+
+# =========================
+# C / C++
+# =========================
+*.o
+*.out
+*.a
+*.so
+*.exe
+*.dll
+
+# =========================
+# Swift / iOS
+# =========================
+DerivedData/
+*.xcworkspace
+*.xcuserdata
+*.xcuserstate
+
+# =========================
+# Android / Kotlin
+# =========================
+local.properties
+*.apk
+*.aab
+
+# =========================
+# 数据库
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Docker
+# =========================
+.dockerignore
+docker-compose.override.yml
+
+# =========================
+# Terraform / DevOps
+# =========================
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# =========================
+# 自定义开发目录
+# =========================
+_dev/
+
+# =========================
+# 其他
+# =========================
+*.pid
+*.seed
+*.lock
+*.pid.lock
+.agents

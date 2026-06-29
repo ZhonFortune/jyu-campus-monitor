@@ -1,0 +1,126 @@
+import { Router, type Request } from "express";
+import { env } from "../config/env.js";
+import { HttpError } from "../shared/http-error.js";
+import { PowerFeeMonitor } from "../services/power-fee-monitor.js";
+import type { PowerFeeLocation } from "../services/power-fee-client.js";
+
+type ManualCheckBody = {
+  accessToken?: unknown;
+  debugPush?: unknown;
+  schoolAreaNo?: unknown;
+  dormBuildingName?: unknown;
+  roomNumber?: unknown;
+};
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return readString(value[0]);
+  }
+
+  return readString(value);
+}
+
+function readAccessToken(request: Request, body: ManualCheckBody | undefined) {
+  const authorization = readHeaderValue(request.headers.authorization);
+  if (authorization?.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim();
+  }
+
+  return readHeaderValue(request.headers["x-access-token"]) ?? readString(request.query.accessToken) ?? readString(body?.accessToken);
+}
+
+function readCronSecret(request: Request): string | undefined {
+  const authorization = readHeaderValue(request.headers.authorization);
+  if (authorization?.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim();
+  }
+
+  return readHeaderValue(request.headers["x-cron-secret"]) ?? readString(request.query.cronSecret);
+}
+
+function buildLocationOverride(body: ManualCheckBody | undefined): Partial<PowerFeeLocation> | undefined {
+  const location: Partial<PowerFeeLocation> = {};
+  const schoolAreaNo = readString(body?.schoolAreaNo);
+  const dormBuildingName = readString(body?.dormBuildingName);
+  const roomNumber = readString(body?.roomNumber);
+
+  if (schoolAreaNo) {
+    location.schoolAreaNo = schoolAreaNo;
+  }
+
+  if (dormBuildingName) {
+    location.dormBuildingName = dormBuildingName;
+  }
+
+  if (roomNumber) {
+    location.roomNumber = roomNumber;
+  }
+
+  return Object.keys(location).length ? location : undefined;
+}
+
+export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
+  const router = Router();
+
+  router.post("/power-fee/fetch", async (request, response, next) => {
+    try {
+      const body = request.body as ManualCheckBody | undefined;
+      const accessToken = readAccessToken(request, body);
+
+      if (!env.accessToken) {
+        throw new HttpError(503, "ACCESS_TOKEN_NOT_CONFIGURED", "访问令牌未配置。");
+      }
+
+      if (accessToken !== env.accessToken) {
+        throw new HttpError(401, "UNAUTHORIZED", "访问令牌无效。");
+      }
+
+      const location = buildLocationOverride(body);
+      const result = await monitor.runManualCheck({
+        debugPush: body?.debugPush === true,
+        ...(location ? { location } : {})
+      });
+
+      response.status(200).json({
+        balance: result.balance,
+        reminded: result.reminded,
+        repeated: result.repeated,
+        debugPushed: result.debugPushed,
+        nextRunAt: result.nextRunAt,
+        raw: result.raw
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/power-fee/cron", async (request, response, next) => {
+    try {
+      if (!env.cronSecret) {
+        throw new HttpError(503, "CRON_SECRET_NOT_CONFIGURED", "定时任务密钥未配置。");
+      }
+
+      if (readCronSecret(request) !== env.cronSecret) {
+        throw new HttpError(401, "UNAUTHORIZED", "定时任务密钥无效。");
+      }
+
+      const result = await monitor.runManualCheck({ debugPush: false });
+
+      response.status(200).json({
+        balance: result.balance,
+        reminded: result.reminded,
+        repeated: result.repeated,
+        debugPushed: result.debugPushed,
+        nextRunAt: result.nextRunAt
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  return router;
+}
