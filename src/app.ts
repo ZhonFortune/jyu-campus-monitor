@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import * as helmetModule from "helmet";
+import helmet from "helmet";
 import { env } from "./config/env.js";
 import { healthRouter } from "./routes/health.js";
 import { createPowerFeeRouter } from "./routes/powerfee.js";
@@ -8,7 +8,6 @@ import { createErrorHandler, HttpError } from "./shared/error.js";
 import { createHttpLogger, Logger } from "./shared/logger.js";
 import { PowerFeeMonitor } from "./services/powerfee/monitor.js";
 
-const helmet = helmetModule.default;
 
 export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel)) {
   const app = express();
