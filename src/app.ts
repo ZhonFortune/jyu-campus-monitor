@@ -4,12 +4,13 @@ import helmet from "helmet";
 import { env } from "./config/env.js";
 import { healthRouter } from "./routes/health.js";
 import { createPowerFeeRouter } from "./routes/powerfee.js";
+import { createTelegramRouter } from "./routes/telegram.js";
 import { createErrorHandler, HttpError } from "./shared/error.js";
 import { createHttpLogger, Logger } from "./shared/logger.js";
 import { PowerFeeMonitor } from "./services/powerfee/monitor.js";
+import { TelegramNotifier } from "./services/telegram/notifier.js";
 
-
-export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel)) {
+export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel), telegramNotifier?: TelegramNotifier) {
   const app = express();
 
   app.disable("x-powered-by");
@@ -21,6 +22,9 @@ export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.log
   app.use(healthRouter);
   if (monitor) {
     app.use(createPowerFeeRouter(monitor));
+  }
+  if (telegramNotifier) {
+    app.use(createTelegramRouter(telegramNotifier));
   }
 
   app.use((_request, _response, next) => {

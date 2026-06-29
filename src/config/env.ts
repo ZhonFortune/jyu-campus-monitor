@@ -50,6 +50,24 @@ function parseOptionalString(name: string): string | null {
   return value || null;
 }
 
+function parseOptionalUrl(name: string): string | null {
+  const value = parseOptionalString(name);
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error();
+    }
+
+    return url.toString();
+  } catch {
+    throw new Error(`${name} must be a valid HTTP or HTTPS URL.`);
+  }
+}
+
 function parseOptionalStringList(name: string): string[] {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -97,6 +115,8 @@ export const env = {
   cronSecret: parseOptionalString("CRON_SECRET"),
   telegramBotToken: parseOptionalString("TELEGRAM_BOT_TOKEN"),
   telegramChatIds: parseOptionalStringList("TELEGRAM_CHAT_ID"),
+  telegramProxyUrl: parseOptionalUrl("TELEGRAM_PROXY_URL"),
+  telegramProxySecret: parseOptionalString("TELEGRAM_PROXY_SECRET"),
   powerFeeRemindThreshold: thresholds.remindThreshold,
   powerFeeRepeatThreshold: thresholds.repeatThreshold,
   schoolAreaNo: process.env.SCHOOL_AREA_NO?.trim() || DEFAULT_SCHOOL_AREA_NO,

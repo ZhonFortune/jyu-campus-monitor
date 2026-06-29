@@ -1,0 +1,81 @@
+name: Deploy CloudBase Function
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/cloudbase-deploy.yml"
+      - "cloudbaserc.json"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - "src/**"
+      - "tsconfig.json"
+  workflow_dispatch:
+
+concurrency:
+  group: cloudbase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+      TENCENTCLOUD_SESSION_TOKEN: ${{ secrets.TENCENTCLOUD_SESSION_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CLOUDBASE_ENV_ID}" ]; then
+            echo "CLOUDBASE_ENV_ID is required."
+            exit 1
+          fi
+
+          if [ -z "${TENCENTCLOUD_SECRET_ID}" ]; then
+            echo "TENCENTCLOUD_SECRET_ID is required."
+            exit 1
+          fi
+
+          if [ -z "${TENCENTCLOUD_SECRET_KEY}" ]; then
+            echo "TENCENTCLOUD_SECRET_KEY is required."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: timeout 180s npm ci
+
+      - name: Build CloudBase function package
+        run: timeout 120s npm run build:cloudbase
+
+      - name: Install CloudBase CLI
+        run: timeout 180s npm install -g @cloudbase/cli
+
+      - name: Login CloudBase
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${TENCENTCLOUD_SESSION_TOKEN}" ]; then
+            tcb login --apiKeyId "${TENCENTCLOUD_SECRET_ID}" --apiKey "${TENCENTCLOUD_SECRET_KEY}" --token "${TENCENTCLOUD_SESSION_TOKEN}"
+          else
+            tcb login --apiKeyId "${TENCENTCLOUD_SECRET_ID}" --apiKey "${TENCENTCLOUD_SECRET_KEY}"
+          fi
+
+      - name: Deploy function
+        run: timeout 300s tcb fn deploy powerfee-cron -e "${CLOUDBASE_ENV_ID}" --force --yes
