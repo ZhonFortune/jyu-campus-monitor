@@ -2,7 +2,7 @@ name: Power Fee Monitor
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:

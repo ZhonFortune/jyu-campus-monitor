@@ -2,7 +2,7 @@
 
 <center>
 
-嘉应学院宿舍电费余额监控服务。每 30 min 触发一次余额查询，并在余额低于阈值时通过 Telegram 发送提醒。<strong>你可以点击下方 Deploy 字样按钮使用 Vercel 平台一键部署服务并使用 [Github Action 触发](#github-actions-定时触发)定时操作以避免 Vercel Hobby 方案的限制</strong>
+嘉应学院宿舍电费余额监控服务。每 1 h 触发一次余额查询，并在余额低于阈值时通过 Telegram 发送提醒。<strong>你可以点击下方 Deploy 字样按钮使用 Vercel 平台一键部署服务并使用 [Github Action 触发](#github-actions-定时触发)定时操作以避免 Vercel Hobby 方案的限制</strong>
 <br>
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,YKT_SESSION_ID&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E5%92%8C%20Vercel%20Cron%20%E9%89%B4%E6%9D%83%E5%AF%86%E9%92%A5&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
@@ -11,7 +11,7 @@
 
 </center>
 
-> Vercel Hobby 不支持 30 min 周期的 Cron。服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
+> Vercel Hobby 不支持小时内多次执行的 Cron。服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
 
 <br>
 
@@ -21,7 +21,7 @@
 2. Fork 本仓库<br>
 3. 使用 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN` 和 `CRON_SECRET`<br>
 4. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
-5. 在自己仓库的 Settings -> Secrets 中设置 `POWERFEE_CRON_URL` 与 `CRON_SECRET` 两个变量<br>
+5. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `POWERFEE_CRON_URL` 与 `CRON_SECRET` 两个变量<br>
 > `POWERFEE_CRON_URL` 为 Vercel 项目地址，例如 `https://jyu-campus-monitor.vercel.app` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
 
 <br>
@@ -131,7 +131,7 @@ curl -X POST "http://localhost:6888/powerfee/fetch" \
 | `POWERFEE_CRON_URL` | Vercel 部署后的完整触发地址，例如 `https://<your-vercel-domain>/powerfee/cron` |
 | `CRON_SECRET` | 与 Vercel 环境变量 `CRON_SECRET` 保持一致 |
 
-工作流会每 30 min 自动请求一次 `POWERFEE_CRON_URL`。手动验证时使用同一个密钥：
+工作流会每 1 h 自动请求一次 `POWERFEE_CRON_URL`。手动验证时使用同一个密钥：
 
 ```bash
 curl -X GET "https://<your-vercel-domain>/powerfee/cron" \
