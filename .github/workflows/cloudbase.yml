@@ -25,15 +25,14 @@ jobs:
 
       - name: Validate relay function package
         shell: bash
+        working-directory: cloudbase/functions/china-relay
         run: |
           set -euo pipefail
 
-          function_dir="cloudbase/functions/china-relay"
-          bootstrap_file="${function_dir}/scf_bootstrap"
+          bootstrap_file="scf_bootstrap"
 
-          test -f "${function_dir}/index.js"
-          test -f "${function_dir}/package.json"
-
+          test -f "index.js"
+          test -f "package.json"
           printf '%s\n' \
             '#!/bin/bash' \
             'set -euo pipefail' \
@@ -44,6 +43,7 @@ jobs:
 
       - name: Deploy relay function
         shell: bash
+        working-directory: cloudbase/functions/china-relay
         env:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
@@ -54,4 +54,4 @@ jobs:
           test -n "$TENCENT_SECRET_KEY"
           test -n "$CLOUDBASE_ENV_ID"
           npx -y --package @cloudbase/cli@3.5.9 tcb login --apiKeyId "$TENCENT_SECRET_ID" --apiKey "$TENCENT_SECRET_KEY"
-          yes y | npx -y --package @cloudbase/cli@3.5.9 tcb fn deploy china-relay --dir cloudbase/functions/china-relay --httpFn --force --yes --env-id "$CLOUDBASE_ENV_ID"
+          npx -y --package @cloudbase/cli@3.5.9 tcb fn deploy china-relay --dir . --httpFn --force --yes --env-id "$CLOUDBASE_ENV_ID"
