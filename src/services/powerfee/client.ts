@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
+import { requestThroughHttpProxy } from "../proxy/http.js";
+import { selectChinaHttpProxies, type HttpProxy } from "../proxy/provider.js";
 
 const YKT_ORIGIN = "https://yktportal.jyu.edu.cn";
 const LOGIN_PAGE_URL = `${YKT_ORIGIN}/sso//login?t=12&redirectUrl=${encodeURIComponent(`${YKT_ORIGIN}/user/powerfee/index`)}`;
@@ -10,6 +12,7 @@ const LOGIN_SUBMIT_URL = `${YKT_ORIGIN}/sso/doLogin`;
 const BALANCE_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getBalance";
 const ROOM_INFO_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getRoomInfo";
 const REQUEST_TIMEOUT_MS = 15_000;
+const PROXY_CANDIDATE_LIMIT = 8;
 const RESPONSE_PREVIEW_LIMIT = 800;
 const WECHAT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541a1f) XWEB/25047 miniProgram/wx84ddfd51a823dc58";
@@ -42,6 +45,22 @@ type YktHttpResponse = {
   text: string;
 };
 
+type YktRequestInit = {
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: URLSearchParams;
+  redirect?: "follow" | "error" | "manual";
+};
+
+type YktRequestResponse = {
+  status: number;
+  statusText: string;
+  headers: Map<string, string>;
+  setCookieHeaders: string[];
+  body: Buffer;
+  text: string;
+};
+
 type LoginResponse = {
   code?: number;
   msg?: string;
@@ -60,8 +79,7 @@ export type CaptchaResolver = (image: Buffer) => Promise<string>;
 class CookieJar {
   private readonly cookies = new Map<string, string>();
 
-  addFromHeaders(headers: Headers): void {
-    const setCookies = readSetCookieHeaders(headers);
+  addFromSetCookieHeaders(setCookies: string[]): void {
     for (const setCookie of setCookies) {
       const [pair] = setCookie.split(";");
       const separator = pair?.indexOf("=") ?? -1;
@@ -133,17 +151,97 @@ function toHeadersMap(headers: Headers): Map<string, string> {
   return mapped;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+async function requestDirect(url: string, init: YktRequestInit = {}): Promise<YktRequestResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
       signal: controller.signal
     });
+    const body = Buffer.from(await response.arrayBuffer());
+
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: toHeadersMap(response.headers),
+      setCookieHeaders: readSetCookieHeaders(response.headers),
+      body,
+      text: body.toString("utf8")
+    };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+class YktRequestClient {
+  private proxiesPromise: Promise<HttpProxy[]> | null = null;
+  private preferredProxy: HttpProxy | null = null;
+
+  constructor(private readonly logger: Logger) {}
+
+  async request(url: string, init: YktRequestInit = {}): Promise<YktRequestResponse> {
+    if (!env.useCnProxy) {
+      return requestDirect(url, init);
+    }
+
+    const proxies = this.orderProxies(await this.getProxies());
+    if (proxies.length === 0) {
+      throw new HttpError(502, "CHINA_HTTP_PROXY_UNAVAILABLE", "回国代理不可用。");
+    }
+
+    let lastError: unknown = null;
+    for (const proxy of proxies) {
+      try {
+        const proxyRequest = {
+          url,
+          headers: init.headers ?? {},
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          proxy,
+          logger: this.logger
+        };
+        const response = await requestThroughHttpProxy({
+          ...proxyRequest,
+          ...(init.method ? { method: init.method } : {}),
+          ...(init.body ? { body: init.body } : {})
+        });
+        this.preferredProxy = proxy;
+
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+          setCookieHeaders: response.setCookieHeaders,
+          body: response.body,
+          text: response.text
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError instanceof HttpError ? lastError : new HttpError(502, "CHINA_HTTP_PROXY_UNAVAILABLE", "回国代理不可用。");
+  }
+
+  private async getProxies(): Promise<HttpProxy[]> {
+    if (!this.proxiesPromise) {
+      this.proxiesPromise = selectChinaHttpProxies(this.logger, PROXY_CANDIDATE_LIMIT);
+    }
+
+    return this.proxiesPromise;
+  }
+
+  private orderProxies(proxies: HttpProxy[]): HttpProxy[] {
+    const preferredProxy = this.preferredProxy;
+    if (!preferredProxy) {
+      return proxies;
+    }
+
+    return [
+      preferredProxy,
+      ...proxies.filter((proxy) => proxy.host !== preferredProxy.host || proxy.port !== preferredProxy.port || proxy.protocol !== preferredProxy.protocol)
+    ];
   }
 }
 
@@ -206,32 +304,36 @@ function parseLoginJson(text: string): unknown {
   return parsed;
 }
 
-async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver | null): Promise<YktSession> {
+async function createYktSession(
+  logger: Logger,
+  requestClient: YktRequestClient,
+  captchaResolver: CaptchaResolver | null
+): Promise<YktSession> {
   if (!captchaResolver) {
     throw new HttpError(409, "YKT_CAPTCHA_RESOLVER_REQUIRED", "验证码服务未就绪。");
   }
 
   const jar = new CookieJar();
 
-  const loginPage = await fetchWithTimeout(LOGIN_PAGE_URL, {
+  const loginPage = await requestClient.request(LOGIN_PAGE_URL, {
     headers: createBaseHeaders(),
     redirect: "manual"
   });
-  jar.addFromHeaders(loginPage.headers);
+  jar.addFromSetCookieHeaders(loginPage.setCookieHeaders);
 
   if (loginPage.status < 200 || loginPage.status >= 400) {
     throw new HttpError(loginPage.status, "YKT_LOGIN_PAGE_FAILED", "登录页访问失败。");
   }
 
-  const rsaResponse = await fetchWithTimeout(LOGIN_RSA_URL, {
+  const rsaResponse = await requestClient.request(LOGIN_RSA_URL, {
     headers: {
       ...createBaseHeaders(jar.toHeader()),
       "X-Requested-With": "XMLHttpRequest",
       Referer: LOGIN_PAGE_URL
     }
   });
-  jar.addFromHeaders(rsaResponse.headers);
-  const rsaText = await rsaResponse.text();
+  jar.addFromSetCookieHeaders(rsaResponse.setCookieHeaders);
+  const rsaText = rsaResponse.text;
   const rsaPayload = parseLoginJson(rsaText) as RsaResponse;
   if (rsaResponse.status < 200 || rsaResponse.status >= 300 || rsaPayload.code !== 200 || !rsaPayload.pubKey) {
     logger.error(`YKT login RSA request failed | status=${rsaResponse.status} | body=${previewResponseBody(rsaText)}`);
@@ -239,20 +341,20 @@ async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver
   }
 
   const encryptedPassword = encryptPassword(env.password, rsaPayload.pubKey);
-  const captchaResponse = await fetchWithTimeout(`${YKT_ORIGIN}/sso/captchaCode?v=${Date.now()}`, {
+  const captchaResponse = await requestClient.request(`${YKT_ORIGIN}/sso/captchaCode?v=${Date.now()}`, {
     headers: {
       ...createBaseHeaders(jar.toHeader()),
       Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
       Referer: LOGIN_PAGE_URL
     }
   });
-  jar.addFromHeaders(captchaResponse.headers);
+  jar.addFromSetCookieHeaders(captchaResponse.setCookieHeaders);
 
   if (captchaResponse.status < 200 || captchaResponse.status >= 300) {
     throw new HttpError(captchaResponse.status, "YKT_CAPTCHA_REQUEST_FAILED", "验证码获取失败。");
   }
 
-  const captchaCode = await captchaResolver(Buffer.from(await captchaResponse.arrayBuffer()));
+  const captchaCode = await captchaResolver(captchaResponse.body);
   const loginBody = new URLSearchParams({
     loginType: "rftSigner",
     plat: "",
@@ -269,7 +371,7 @@ async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver
     renter: ""
   });
 
-  const submitResponse = await fetchWithTimeout(LOGIN_SUBMIT_URL, {
+  const submitResponse = await requestClient.request(LOGIN_SUBMIT_URL, {
     method: "POST",
     headers: {
       ...createBaseHeaders(jar.toHeader()),
@@ -280,8 +382,8 @@ async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver
     },
     body: loginBody
   });
-  jar.addFromHeaders(submitResponse.headers);
-  const submitText = await submitResponse.text();
+  jar.addFromSetCookieHeaders(submitResponse.setCookieHeaders);
+  const submitText = submitResponse.text;
   const submitPayload = parseLoginJson(submitText) as LoginResponse;
 
   if (submitResponse.status < 200 || submitResponse.status >= 300 || submitPayload.code !== 200 || !submitPayload.token) {
@@ -299,11 +401,11 @@ async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver
 
   jar.set("token", submitPayload.token);
   const callbackUrl = `${YKT_ORIGIN}/user/powerfee/index?from=wxminiprogram&token=${encodeURIComponent(submitPayload.token)}`;
-  const callbackResponse = await fetchWithTimeout(callbackUrl, {
+  const callbackResponse = await requestClient.request(callbackUrl, {
     headers: createBaseHeaders(jar.toHeader()),
     redirect: "manual"
   });
-  jar.addFromHeaders(callbackResponse.headers);
+  jar.addFromSetCookieHeaders(callbackResponse.setCookieHeaders);
 
   if (callbackResponse.status < 200 || callbackResponse.status >= 400) {
     logger.error(`YKT login callback failed | status=${callbackResponse.status}`);
@@ -318,6 +420,7 @@ async function createYktSession(logger: Logger, captchaResolver: CaptchaResolver
 }
 
 async function postYktForm(
+  requestClient: YktRequestClient,
   session: YktSession,
   url: string,
   body: URLSearchParams
@@ -326,19 +429,19 @@ async function postYktForm(
   requestBody.set("from", "wxminiprogram");
   requestBody.set("token", session.token);
 
-  const response = await fetchWithTimeout(url, {
+  const response = await requestClient.request(url, {
     method: "POST",
     headers: createYktHeaders(session),
     body: requestBody
   });
-  const text = await response.text();
+  const text = response.text;
   const payload = parseJson(text);
 
   return {
     response: {
       status: response.status,
       statusText: response.statusText,
-      headers: toHeadersMap(response.headers),
+      headers: response.headers,
       text
     },
     text,
@@ -428,11 +531,14 @@ function isSessionExpiredError(error: unknown): boolean {
 
 export class PowerFeeClient {
   private readonly roomInfoCache = new Map<string, ResolvedRoomInfo>();
+  private readonly requestClient: YktRequestClient;
   private captchaResolver: CaptchaResolver | null = null;
   private session: YktSession | null = null;
   private sessionPromise: Promise<YktSession> | null = null;
 
-  constructor(private readonly logger: Logger) {}
+  constructor(private readonly logger: Logger) {
+    this.requestClient = new YktRequestClient(logger);
+  }
 
   setCaptchaResolver(captchaResolver: CaptchaResolver): void {
     this.captchaResolver = captchaResolver;
@@ -472,6 +578,7 @@ export class PowerFeeClient {
 
     try {
       const { response, text, payload } = await postYktForm(
+        this.requestClient,
         session,
         BALANCE_URL,
         new URLSearchParams({
@@ -530,7 +637,7 @@ export class PowerFeeClient {
     }
 
     if (!this.sessionPromise) {
-      this.sessionPromise = createYktSession(this.logger, this.captchaResolver)
+      this.sessionPromise = createYktSession(this.logger, this.requestClient, this.captchaResolver)
         .then((session) => {
           this.session = session;
           return session;
@@ -562,6 +669,7 @@ export class PowerFeeClient {
 
     try {
       const { response, text, payload } = await postYktForm(
+        this.requestClient,
         session,
         ROOM_INFO_URL,
         new URLSearchParams({

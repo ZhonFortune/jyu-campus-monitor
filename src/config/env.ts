@@ -50,6 +50,23 @@ function parseOptionalString(name: string): string | null {
   return value || null;
 }
 
+function parseBoolean(name: string, defaultValue: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) {
+    return defaultValue;
+  }
+
+  if (value === "true") {
+    return true;
+  }
+
+  if (value === "false") {
+    return false;
+  }
+
+  throw new Error(`${name} must be true or false.`);
+}
+
 function parseVercelUrl(value: string | undefined): string | null {
   const trimmedValue = value?.trim();
   if (!trimmedValue) {
@@ -95,6 +112,7 @@ export const env = {
   telegramBotToken: parseOptionalString("TELEGRAM_BOT_TOKEN"),
   telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseVercelUrl(process.env.VERCEL_URL),
   telegramWebhookSecret: parseOptionalString("TELEGRAM_WEBHOOK_SECRET"),
+  useCnProxy: parseBoolean("USE_CN_PROXY", false),
   username: parseRequiredString("USERNAME"),
   password: parseRequiredString("PASSWORD"),
   powerFeeRemindThreshold: thresholds.remindThreshold,

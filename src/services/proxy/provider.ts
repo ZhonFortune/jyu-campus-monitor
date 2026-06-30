@@ -2,6 +2,8 @@ import net from "node:net";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
 
+type ProxyProtocol = "http" | "socks4" | "socks5";
+
 const PROXY_SOURCE_URL = "https://proxychina.github.io/free-proxy-for-china/";
 const PROXY_SOURCE_TIMEOUT_MS = 15_000;
 const PROXY_HEALTH_CHECK_TIMEOUT_MS = 3_000;
@@ -13,7 +15,7 @@ export type HttpProxy = {
   port: number;
   username: string | null;
   password: string | null;
-  protocol: "http";
+  protocol: ProxyProtocol;
   anonymity: string;
   uptimeScore: number;
   latencyMs: number;
@@ -37,11 +39,12 @@ function parseConfiguredProxy(): HttpProxy | null {
   }
 
   const url = new URL(rawValue);
-  if (url.protocol !== "http:") {
-    throw new Error("CHINA_HTTP_PROXY_URL must use http.");
+  const protocol = parseProxyProtocol(url.protocol.replace(":", ""));
+  if (!protocol) {
+    throw new Error("CHINA_HTTP_PROXY_URL must use http, socks4, or socks5.");
   }
 
-  const port = url.port ? Number(url.port) : 80;
+  const port = url.port ? Number(url.port) : protocol === "http" ? 80 : 1080;
   if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("CHINA_HTTP_PROXY_URL must include a valid host and port.");
   }
@@ -51,7 +54,7 @@ function parseConfiguredProxy(): HttpProxy | null {
     port,
     username: url.username ? decodeURIComponent(url.username) : null,
     password: url.password ? decodeURIComponent(url.password) : null,
-    protocol: "http",
+    protocol,
     anonymity: "configured",
     uptimeScore: Number.POSITIVE_INFINITY,
     latencyMs: 0
@@ -95,6 +98,16 @@ function parseUptimeScore(value: string): number {
   return parseNumber(value) ?? 0;
 }
 
+function parseProxyProtocol(value: string): ProxyProtocol | null {
+  const protocol = value.trim().toLowerCase();
+  return protocol === "http" || protocol === "socks4" || protocol === "socks5" ? protocol : null;
+}
+
+function normalizeCredential(value: string): string | null {
+  const normalized = value.trim();
+  return normalized && normalized !== "****" ? normalized : null;
+}
+
 function parseRows(html: string): RawProxyRow[] {
   const rows = html.match(/<tr\b[\s\S]*?<\/tr>/gi) ?? [];
 
@@ -126,7 +139,8 @@ function normalizeProxy(row: RawProxyRow): HttpProxy | null {
     return null;
   }
 
-  if (row.protocol.trim().toLowerCase() !== "http") {
+  const protocol = parseProxyProtocol(row.protocol);
+  if (!protocol) {
     return null;
   }
 
@@ -137,9 +151,9 @@ function normalizeProxy(row: RawProxyRow): HttpProxy | null {
   return {
     host: row.host,
     port,
-    username: row.username || null,
-    password: row.password || null,
-    protocol: "http",
+    username: normalizeCredential(row.username),
+    password: normalizeCredential(row.password),
+    protocol,
     anonymity: row.anonymity,
     uptimeScore: parseUptimeScore(row.uptime),
     latencyMs: parseLatencyMs(row.latency)
@@ -217,12 +231,135 @@ function createProxyAuthorization(proxy: HttpProxy): string | null {
   return `Basic ${Buffer.from(`${proxy.username ?? ""}:${proxy.password ?? ""}`).toString("base64")}`;
 }
 
-async function checkHttpProxy(proxy: HttpProxy): Promise<HttpProxy | null> {
+function readExact(socket: net.Socket, length: number, timeoutMs: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("SOCKS5 proxy health check response timeout."));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("data", onData);
+      socket.off("error", onError);
+    };
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length < length) {
+        return;
+      }
+
+      cleanup();
+      const rest = buffer.subarray(length);
+      if (rest.length > 0) {
+        socket.unshift(rest);
+      }
+      resolve(buffer.subarray(0, length));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    socket.on("data", onData);
+    socket.once("error", onError);
+  });
+}
+
+async function connectSocks5Target(socket: net.Socket, proxy: HttpProxy, targetHost: string, targetPort: number, timeoutMs: number): Promise<void> {
+  const methods = proxy.username || proxy.password ? [0x00, 0x02] : [0x00];
+  socket.write(Buffer.from([0x05, methods.length, ...methods]));
+  const methodResponse = await readExact(socket, 2, timeoutMs);
+  if (methodResponse[0] !== 0x05 || methodResponse[1] === 0xff) {
+    throw new Error("SOCKS5 proxy has no acceptable authentication method.");
+  }
+
+  if (methodResponse[1] === 0x02) {
+    const username = Buffer.from(proxy.username ?? "", "utf8");
+    const password = Buffer.from(proxy.password ?? "", "utf8");
+    if (username.length > 255 || password.length > 255) {
+      throw new Error("SOCKS5 proxy credentials are too long.");
+    }
+
+    socket.write(Buffer.concat([Buffer.from([0x01, username.length]), username, Buffer.from([password.length]), password]));
+    const authResponse = await readExact(socket, 2, timeoutMs);
+    if (authResponse[0] !== 0x01 || authResponse[1] !== 0x00) {
+      throw new Error("SOCKS5 proxy authentication failed.");
+    }
+  }
+
+  const host = Buffer.from(targetHost, "utf8");
+  if (host.length > 255) {
+    throw new Error("SOCKS5 target host is too long.");
+  }
+
+  const port = Buffer.allocUnsafe(2);
+  port.writeUInt16BE(targetPort, 0);
+  socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, host.length]), host, port]));
+
+  const responseHead = await readExact(socket, 4, timeoutMs);
+  if (responseHead[0] !== 0x05 || responseHead[1] !== 0x00) {
+    throw new Error(`SOCKS5 proxy connect failed with code ${responseHead[1] ?? "unknown"}.`);
+  }
+
+  const addressType = responseHead[3];
+  const addressLength = addressType === 0x01 ? 4 : addressType === 0x04 ? 16 : addressType === 0x03 ? (await readExact(socket, 1, timeoutMs))[0] : 0;
+  if (!addressLength) {
+    throw new Error("SOCKS5 proxy returned invalid address type.");
+  }
+
+  await readExact(socket, addressLength + 2, timeoutMs);
+}
+
+async function connectSocks4Target(socket: net.Socket, proxy: HttpProxy, targetHost: string, targetPort: number, timeoutMs: number): Promise<void> {
+  const port = Buffer.allocUnsafe(2);
+  port.writeUInt16BE(targetPort, 0);
+  const userId = Buffer.from(proxy.username ?? "", "utf8");
+  const host = Buffer.from(targetHost, "utf8");
+  if (userId.includes(0) || host.includes(0)) {
+    throw new Error("SOCKS4 proxy target contains invalid null byte.");
+  }
+
+  socket.write(
+    Buffer.concat([
+      Buffer.from([0x04, 0x01]),
+      port,
+      Buffer.from([0x00, 0x00, 0x00, 0x01]),
+      userId,
+      Buffer.from([0x00]),
+      host,
+      Buffer.from([0x00])
+    ])
+  );
+
+  const response = await readExact(socket, 8, timeoutMs);
+  if (response[0] !== 0x00 || response[1] !== 0x5a) {
+    throw new Error(`SOCKS4 proxy connect failed with code ${response[1] ?? "unknown"}.`);
+  }
+}
+
+async function checkProxy(proxy: HttpProxy): Promise<HttpProxy | null> {
   const startedAt = Date.now();
   const socket = net.createConnection({ host: proxy.host, port: proxy.port });
 
   try {
     await waitForSocketConnect(socket, PROXY_HEALTH_CHECK_TIMEOUT_MS);
+    if (proxy.protocol === "socks5") {
+      await connectSocks5Target(socket, proxy, "yktportal.jyu.edu.cn", 443, PROXY_HEALTH_CHECK_TIMEOUT_MS);
+      return {
+        ...proxy,
+        latencyMs: Math.max(1, Date.now() - startedAt)
+      };
+    }
+
+    if (proxy.protocol === "socks4") {
+      await connectSocks4Target(socket, proxy, "yktportal.jyu.edu.cn", 443, PROXY_HEALTH_CHECK_TIMEOUT_MS);
+      return {
+        ...proxy,
+        latencyMs: Math.max(1, Date.now() - startedAt)
+      };
+    }
+
     const authorization = createProxyAuthorization(proxy);
     const request = [
       "CONNECT yktportal.jyu.edu.cn:443 HTTP/1.1",
@@ -255,7 +392,7 @@ async function checkHttpProxy(proxy: HttpProxy): Promise<HttpProxy | null> {
 export async function selectChinaHttpProxies(logger: Logger, limit = DEFAULT_PROXY_LIMIT): Promise<HttpProxy[]> {
   const configuredProxy = parseConfiguredProxy();
   if (configuredProxy) {
-    logger.info(`China HTTP proxy configured | host=${configuredProxy.host} | port=${configuredProxy.port}`);
+    logger.info(`China proxy configured | protocol=${configuredProxy.protocol} | host=${configuredProxy.host} | port=${configuredProxy.port}`);
     return [configuredProxy];
   }
 
@@ -276,14 +413,20 @@ export async function selectChinaHttpProxies(logger: Logger, limit = DEFAULT_PRO
       .sort((left, right) => right.uptimeScore - left.uptimeScore || left.latencyMs - right.latencyMs);
 
     const healthCheckPool = candidates.slice(0, Math.max(limit, HEALTH_CHECK_POOL_SIZE));
-    const checked = await Promise.all(healthCheckPool.map(checkHttpProxy));
+    const checked = await Promise.all(healthCheckPool.map(checkProxy));
     const healthy = checked.filter((proxy): proxy is HttpProxy => proxy !== null);
     const selected = healthy.slice(0, Math.max(1, limit));
     if (selected.length === 0) {
-      throw new HttpError(502, "PROXY_SOURCE_EMPTY", "未找到可用代理节点。");
+      const fallback = candidates.slice(0, Math.max(1, limit));
+      if (fallback.length === 0) {
+        throw new HttpError(502, "PROXY_SOURCE_EMPTY", "未找到可用代理节点。");
+      }
+
+      logger.warn(`China proxy health check empty; using unchecked candidates | available=${candidates.length}`);
+      return fallback;
     }
 
-    logger.info(`China HTTP proxy candidates selected | count=${selected.length} | healthy=${healthy.length} | available=${candidates.length}`);
+    logger.info(`China proxy candidates selected | count=${selected.length} | healthy=${healthy.length} | available=${candidates.length}`);
 
     return selected;
   } catch (error) {
@@ -292,7 +435,7 @@ export async function selectChinaHttpProxies(logger: Logger, limit = DEFAULT_PRO
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    logger.error(`China HTTP proxy selection failed | cause=${message}`);
+    logger.error(`China proxy selection failed | cause=${message}`);
     throw new HttpError(502, "PROXY_SOURCE_REQUEST_ERROR", "代理节点获取异常。");
   } finally {
     clearTimeout(timeout);
