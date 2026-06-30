@@ -23,7 +23,27 @@ jobs:
         with:
           node-version: 22
 
+      - name: Validate relay function package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          function_dir="cloudbase/functions/china-relay"
+          bootstrap_file="${function_dir}/scf_bootstrap"
+
+          test -f "${function_dir}/index.js"
+          test -f "${function_dir}/package.json"
+
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'set -euo pipefail' \
+            '' \
+            'node index.js' > "${bootstrap_file}"
+          chmod +x "${bootstrap_file}"
+          test -x "${bootstrap_file}"
+
       - name: Deploy relay function
+        shell: bash
         env:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}

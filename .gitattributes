@@ -1,0 +1,4 @@
+*.sh text eol=lf
+tsconfig.json text eol=lf
+.github/workflows/*.yml text eol=lf
+cloudbase/functions/**/scf_bootstrap text eol=lf
