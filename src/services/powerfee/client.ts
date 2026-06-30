@@ -1,10 +1,13 @@
 import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
+import { postFormThroughHttpProxy, type ProxiedHttpResponse } from "../proxy/http.js";
+import { selectChinaHttpProxies } from "../proxy/provider.js";
 
 const BALANCE_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getBalance";
 const ROOM_INFO_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getRoomInfo";
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+const PROXY_ATTEMPT_TIMEOUT_MS = 15_000;
 const RESPONSE_PREVIEW_LIMIT = 800;
 
 export type PowerFeeLocation = {
@@ -64,11 +67,57 @@ function createHeaders(): Record<string, string> {
     Referer: "https://yktportal.jyu.edu.cn/user/powerfee/index"
   };
 
-  if (env.yktSessionId) {
-    headers.Cookie = `JSESSIONID=${env.yktSessionId}`;
+  return headers;
+}
+
+async function postYktForm(
+  url: string,
+  body: URLSearchParams,
+  logger: Logger
+): Promise<{ response: ProxiedHttpResponse; text: string; payload: unknown }> {
+  const proxies = await selectChinaHttpProxies(logger);
+  let lastError: unknown = null;
+
+  for (const [index, proxy] of proxies.entries()) {
+    try {
+      logger.info(
+        [
+          "China HTTP proxy attempt started",
+          `attempt=${index + 1}`,
+          `host=${proxy.host}`,
+          `port=${proxy.port}`,
+          `uptime=${proxy.uptimeScore}`,
+          `latencyMs=${proxy.latencyMs}`
+        ].join(" | ")
+      );
+      const response = await postFormThroughHttpProxy({
+        url,
+        headers: createHeaders(),
+        body,
+        timeoutMs: PROXY_ATTEMPT_TIMEOUT_MS,
+        proxy,
+        logger
+      });
+      const payload = parseJson(response.text);
+
+      logger.info(`China HTTP proxy attempt completed | attempt=${index + 1} | status=${response.status}`);
+      return {
+        response,
+        text: response.text,
+        payload
+      };
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`China HTTP proxy attempt failed | attempt=${index + 1} | host=${proxy.host} | cause=${message}`);
+    }
   }
 
-  return headers;
+  if (lastError instanceof HttpError) {
+    throw lastError;
+  }
+
+  throw new HttpError(502, "HTTP_PROXY_UNAVAILABLE", "代理节点不可用。");
 }
 
 function findBalanceValue(payload: unknown): number | null {
@@ -127,14 +176,11 @@ export class PowerFeeClient {
       dormBuildingName: location.dormBuildingName,
       roomNumber: location.roomNumber
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const response = await fetch(BALANCE_URL, {
-        method: "POST",
-        headers: createHeaders(),
-        body: new URLSearchParams({
+      const { response, text, payload } = await postYktForm(
+        BALANCE_URL,
+        new URLSearchParams({
           implType: "CGCOMMON0001",
           schoolAreaNo,
           buildingNo: resolvedRoom.buildingNo,
@@ -142,13 +188,10 @@ export class PowerFeeClient {
           from: "",
           token: ""
         }),
-        signal: controller.signal
-      });
+        this.logger
+      );
 
-      const text = await response.text();
-      const payload = parseJson(text);
-
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         this.logger.error(
           [
             "Power fee balance request failed",
@@ -181,8 +224,6 @@ export class PowerFeeClient {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Power fee balance request error | cause=${message}`);
       throw new HttpError(502, "POWER_FEE_REQUEST_ERROR", "电费查询异常。");
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -197,25 +238,19 @@ export class PowerFeeClient {
       return cached;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
     try {
-      const response = await fetch(ROOM_INFO_URL, {
-        method: "POST",
-        headers: createHeaders(),
-        body: new URLSearchParams({
+      const { response, text, payload } = await postYktForm(
+        ROOM_INFO_URL,
+        new URLSearchParams({
           from: "",
           token: "",
           implType: "CGCOMMON0001",
           buyMark: ""
         }),
-        signal: controller.signal
-      });
-      const text = await response.text();
-      const payload = parseJson(text);
+        this.logger
+      );
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         this.logger.error(
           [
             "Room info request failed",
@@ -258,8 +293,6 @@ export class PowerFeeClient {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Room info request error | cause=${message}`);
       throw new HttpError(502, "ROOM_INFO_REQUEST_ERROR", "房间索引查询异常。");
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }

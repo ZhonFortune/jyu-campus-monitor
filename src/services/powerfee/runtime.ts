@@ -13,12 +13,7 @@ export function createPowerFeeRuntime(logger = new Logger(env.logLevel)) {
       remindThreshold: env.powerFeeRemindThreshold,
       repeatThreshold: env.powerFeeRepeatThreshold
     },
-    logger,
-    env.telegramChatIds,
-    {
-      url: env.telegramProxyUrl,
-      secret: env.telegramProxySecret
-    }
+    logger
   );
   const powerFeeMonitor = new PowerFeeMonitor(new PowerFeeClient(logger), telegramNotifier, logger);
 

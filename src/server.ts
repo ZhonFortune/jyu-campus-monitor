@@ -5,7 +5,7 @@ import { createPowerFeeRuntime } from "./services/powerfee/runtime.js";
 
 const bootstrapLogger = new Logger(env.logLevel);
 const { powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime(bootstrapLogger);
-const { app, logger } = createApp(powerFeeMonitor, bootstrapLogger, telegramNotifier);
+const { app, logger } = createApp(powerFeeMonitor, bootstrapLogger);
 
 const server = app.listen(env.port, () => {
   logger.info(`Server listening on port ${env.port}`);

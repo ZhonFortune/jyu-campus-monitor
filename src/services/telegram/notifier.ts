@@ -28,11 +28,6 @@ export type TelegramStatusConfig = {
   repeatThreshold: number;
 };
 
-export type TelegramProxyConfig = {
-  url: string | null;
-  secret: string | null;
-};
-
 type BalanceProvider = () => Promise<number>;
 
 const SUBSCRIBER_STORE_PATH = path.join(process.cwd(), ".cache", "telegram", "subscribers.json");
@@ -107,8 +102,7 @@ export class TelegramNotifier {
     token: string | null,
     private readonly status: TelegramStatusConfig,
     private readonly logger: Logger,
-    subscriberChatIds: readonly string[] = [],
-    private readonly proxy: TelegramProxyConfig = { url: null, secret: null }
+    subscriberChatIds: readonly string[] = []
   ) {
     this.bot = token ? new Telegraf(token) : null;
 
@@ -156,6 +150,7 @@ export class TelegramNotifier {
     this.bot.command("left", async (context) => {
       this.logger.info(`Telegram command received | command=/left | chatId=${context.chat.id}`);
       try {
+        await context.reply("电费提醒信息获取中...");
         const balance = await this.getBalance();
         this.logger.info(`Telegram command balance resolved | command=/left | balance=${formatLogBalance(balance)}`);
         await context.reply(
@@ -168,7 +163,7 @@ export class TelegramNotifier {
         this.logger.info(`Telegram command reply sent | command=/left | chatId=${context.chat.id} | balance=${formatLogBalance(balance)}`);
       } catch {
         this.logger.error(`Telegram command failed | command=/left | chatId=${context.chat.id}`);
-        await context.reply("当前电费余额查询失败。");
+        await context.reply("当前电费余额查询失败");
       }
     });
 
@@ -188,12 +183,12 @@ export class TelegramNotifier {
   }
 
   async sendPowerFeeAlert(notification: PowerFeeNotification): Promise<void> {
-    if (!this.bot && !this.hasProxy()) {
+    if (!this.bot) {
       throw new HttpError(409, "TELEGRAM_DISABLED", "Telegram 机器人未配置。");
     }
 
     if (this.subscriberChatIds.size === 0) {
-      throw new HttpError(409, "TELEGRAM_SUBSCRIBER_REQUIRED", "请先配置 TELEGRAM_CHAT_ID，或向 Telegram 机器人发送 /start。");
+      throw new HttpError(409, "TELEGRAM_SUBSCRIBER_REQUIRED", "请先向 Telegram 机器人发送 /start。");
     }
 
     const message =
@@ -300,10 +295,6 @@ export class TelegramNotifier {
   }
 
   private async sendToSubscribers(message: string): Promise<boolean> {
-    if (this.hasProxy()) {
-      return this.sendToProxy(message, Array.from(this.subscriberChatIds));
-    }
-
     const bot = this.bot;
     if (!bot) {
       return false;
@@ -317,63 +308,5 @@ export class TelegramNotifier {
     this.logger.info(`Telegram send batch completed | sent=${sentCount} | failed=${failedCount}`);
 
     return results.some((result) => result.status === "fulfilled");
-  }
-
-  async sendProxyMessage(message: string, chatIds?: readonly string[]): Promise<{ sent: number; failed: number }> {
-    if (!this.bot) {
-      throw new HttpError(409, "TELEGRAM_DISABLED", "Telegram 机器人未配置。");
-    }
-
-    const targets = chatIds?.length ? chatIds.map(normalizeChatId).filter(Boolean) : Array.from(this.subscriberChatIds);
-    if (targets.length === 0) {
-      throw new HttpError(409, "TELEGRAM_SUBSCRIBER_REQUIRED", "请先配置 TELEGRAM_CHAT_ID。");
-    }
-
-    const results = await Promise.allSettled(targets.map((chatId) => this.bot!.telegram.sendMessage(chatId, message)));
-    const sent = results.filter((result) => result.status === "fulfilled").length;
-    const failed = results.length - sent;
-    this.logger.info(`Telegram proxy send completed | sent=${sent} | failed=${failed}`);
-
-    if (sent === 0) {
-      throw new HttpError(502, "TELEGRAM_SEND_FAILED", "Telegram 消息发送失败。");
-    }
-
-    return { sent, failed };
-  }
-
-  private hasProxy(): boolean {
-    return Boolean(this.proxy.url && this.proxy.secret);
-  }
-
-  private async sendToProxy(message: string, chatIds: readonly string[]): Promise<boolean> {
-    const { url, secret } = this.proxy;
-    if (!url || !secret) {
-      return false;
-    }
-
-    this.logger.info(`Telegram proxy push requested | subscribers=${chatIds.length}`);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${secret}`
-        },
-        body: JSON.stringify({ message, chatIds })
-      });
-      const text = await response.text();
-
-      if (!response.ok) {
-        this.logger.error(`Telegram proxy push failed | status=${response.status} | body=${text.slice(0, 400)}`);
-        return false;
-      }
-
-      this.logger.info(`Telegram proxy push completed | status=${response.status}`);
-      return true;
-    } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Telegram proxy push error | cause=${messageText}`);
-      return false;
-    }
   }
 }
