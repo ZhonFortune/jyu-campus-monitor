@@ -33,4 +33,4 @@ jobs:
           test -n "$TENCENT_SECRET_ID"
           test -n "$TENCENT_SECRET_KEY"
           test -n "$CLOUDBASE_ENV_ID"
-          npx -y @cloudbase/cli@latest functions:deploy china-relay --dir cloudbase/functions/china-relay --envId "$CLOUDBASE_ENV_ID"
+          npx -y --package @cloudbase/cli@3.5.9 cloudbase functions:deploy china-relay --dir cloudbase/functions/china-relay --envId "$CLOUDBASE_ENV_ID"
