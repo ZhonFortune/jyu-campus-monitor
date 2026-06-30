@@ -50,6 +50,18 @@ function parseOptionalString(name: string): string | null {
   return value || null;
 }
 
+function parseOptionalStringList(name: string): readonly string[] {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function parseBoolean(name: string, defaultValue: boolean): boolean {
   const value = process.env[name]?.trim().toLowerCase();
   if (!value) {
@@ -74,6 +86,10 @@ function parseVercelUrl(value: string | undefined): string | null {
   }
 
   return trimmedValue.startsWith("http://") || trimmedValue.startsWith("https://") ? trimmedValue : `https://${trimmedValue}`;
+}
+
+function parseDefaultTelegramWebhookUrl(): string | null {
+  return parseVercelUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL) ?? parseVercelUrl(process.env.VERCEL_URL);
 }
 
 function parseOptionalHttpUrl(name: string): string | null {
@@ -124,8 +140,9 @@ export const env = {
   accessToken: parseOptionalString("ACCESS_TOKEN"),
   cronSecret: parseOptionalString("CRON_SECRET"),
   telegramBotToken: parseOptionalString("TELEGRAM_BOT_TOKEN"),
-  telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseVercelUrl(process.env.VERCEL_URL),
+  telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseDefaultTelegramWebhookUrl(),
   telegramWebhookSecret: parseOptionalString("TELEGRAM_WEBHOOK_SECRET"),
+  telegramChatIds: parseOptionalStringList("TELEGRAM_CHAT_IDS"),
   useCnProxy: parseBoolean("USE_CN_PROXY", false),
   chinaRelayUrl: parseOptionalHttpUrl("CHINA_RELAY_URL"),
   chinaRelaySecret: parseOptionalString("CHINA_RELAY_SECRET"),

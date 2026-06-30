@@ -43,8 +43,14 @@ jobs:
           cron_base="${cron_base%/}"
           case "${cron_base}" in
             */powerfee/cron) cron_base="${cron_base%/powerfee/cron}" ;;
+            */telegram/webhook/configure) cron_base="${cron_base%/telegram/webhook/configure}" ;;
           esac
+          webhook_configure_url="${cron_base}/telegram/webhook/configure"
           cron_url="${cron_base}/powerfee/cron"
+
+          curl --fail --silent --show-error --location --max-time 25 --retry 2 --retry-delay 5 \
+            --request POST "${webhook_configure_url}" \
+            --header "Authorization: Bearer ${CRON_SECRET}"
 
           curl --fail --silent --show-error --location --max-time 25 --retry 2 --retry-delay 5 \
             --request GET "${cron_url}" \

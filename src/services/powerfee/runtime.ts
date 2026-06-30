@@ -13,7 +13,8 @@ export function createPowerFeeRuntime(logger = new Logger(env.logLevel)) {
       remindThreshold: env.powerFeeRemindThreshold,
       repeatThreshold: env.powerFeeRepeatThreshold
     },
-    logger
+    logger,
+    env.telegramChatIds
   );
   const powerFeeClient = new PowerFeeClient(logger);
   powerFeeClient.setCaptchaResolver((image) => telegramNotifier.requestCaptcha(image));

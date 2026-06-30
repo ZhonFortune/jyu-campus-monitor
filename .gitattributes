@@ -1,4 +1,7 @@
 *.sh text eol=lf
+*.ts text eol=lf
+.env.example text eol=lf
+.gitattributes text eol=lf
 tsconfig.json text eol=lf
 .github/workflows/*.yml text eol=lf
 cloudbase/functions/**/scf_bootstrap text eol=lf

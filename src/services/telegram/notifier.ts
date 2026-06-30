@@ -1,4 +1,5 @@
 ﻿import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Telegraf } from "telegraf";
 import { env } from "../../config/env.js";
@@ -39,7 +40,9 @@ type PendingCaptcha = {
   timeout: NodeJS.Timeout;
 };
 
-const SUBSCRIBER_STORE_PATH = path.join(process.cwd(), ".cache", "telegram", "subscribers.json");
+const SUBSCRIBER_STORE_PATH =
+  process.env.TELEGRAM_SUBSCRIBER_STORE_PATH?.trim() ||
+  path.join(process.env.VERCEL ? os.tmpdir() : process.cwd(), ".cache", "telegram", "subscribers.json");
 const CAPTCHA_TIMEOUT_MS = 2 * 60 * 1000;
 const TELEGRAM_WEBHOOK_PATH = "/telegram/webhook";
 
@@ -208,11 +211,23 @@ export class TelegramNotifier {
         .setWebhook(buildTelegramWebhookUrl(env.telegramWebhookUrl), webhookOptions)
         .then(() => {
           this.logger.info("Telegram webhook configured.");
+        })
+        .catch((error: unknown) => {
+          this.webhookConfiguredPromise = null;
+          throw error;
         });
     }
 
     await this.webhookConfiguredPromise;
     return "configured";
+  }
+
+  async getWebhookInfo(): Promise<unknown> {
+    if (!this.bot) {
+      throw new HttpError(409, "TELEGRAM_DISABLED", "Telegram 机器人未配置。");
+    }
+
+    return this.bot.telegram.getWebhookInfo();
   }
 
   stop(reason: string): void {
@@ -535,8 +550,13 @@ export class TelegramNotifier {
   }
 
   private async saveSubscribers(): Promise<void> {
-    await mkdir(path.dirname(SUBSCRIBER_STORE_PATH), { recursive: true });
-    await writeFile(SUBSCRIBER_STORE_PATH, JSON.stringify(Array.from(this.subscriberChatIds), null, 2), "utf8");
+    try {
+      await mkdir(path.dirname(SUBSCRIBER_STORE_PATH), { recursive: true });
+      await writeFile(SUBSCRIBER_STORE_PATH, JSON.stringify(Array.from(this.subscriberChatIds), null, 2), "utf8");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Subscriber save failed.";
+      this.logger.warn(`Telegram subscribers persisted in memory only | cause=${message}`);
+    }
   }
 
   private async getBalance(): Promise<number> {
