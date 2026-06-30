@@ -183,7 +183,7 @@ export class TelegramNotifier {
     this.logger.info(`Telegram bot starting | subscribers=${this.subscriberChatIds.size}`);
     this.registerHandlers();
 
-    await this.bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
     await this.bot.launch();
     this.started = true;
     this.logger.info("Telegram bot started.");
@@ -211,8 +211,8 @@ export class TelegramNotifier {
     }
 
     const webhookOptions = env.telegramWebhookSecret
-      ? { secret_token: env.telegramWebhookSecret, drop_pending_updates: false }
-      : { drop_pending_updates: false };
+      ? { secret_token: env.telegramWebhookSecret, drop_pending_updates: true }
+      : { drop_pending_updates: true };
 
     await this.bot.telegram.setWebhook(buildTelegramWebhookUrl(baseUrl), webhookOptions);
     this.logger.info("Telegram webhook configured.");
@@ -382,12 +382,12 @@ export class TelegramNotifier {
 
       if (this.isServerlessLoginEnabled()) {
         await context.reply("正在获取验证码");
-        void this.requestLoginCaptchaAndReply(context.chat.id);
+        await this.requestLoginCaptchaAndReply(context.chat.id);
         return;
       }
 
       await context.reply("正在获取登录接口，请稍后");
-      void this.loginAndReply(context.chat.id);
+      await this.loginAndReply(context.chat.id);
     });
 
     this.bot.command("left", async (context) => {
@@ -399,7 +399,7 @@ export class TelegramNotifier {
       }
 
       await context.reply("电费提醒信息获取中");
-      void this.replyBalance(context.chat.id);
+      await this.replyBalance(context.chat.id);
     });
 
     this.bot.on("text", async (context) => {
@@ -420,7 +420,7 @@ export class TelegramNotifier {
           }
 
           await context.reply("登陆中，请稍候");
-          void this.completeServerlessLoginAndReply(context.chat.id, code);
+          await this.completeServerlessLoginAndReply(context.chat.id, code);
           return;
         }
 
