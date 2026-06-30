@@ -4,6 +4,7 @@ const DEFAULT_ALLOWED_TARGET_HOSTS = "yktportal.jyu.edu.cn";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BODY_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
+const SERVER_PORT = Number(process.env.PORT || 9000);
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "content-length",
@@ -201,7 +202,7 @@ async function fetchTarget(request) {
   }
 }
 
-exports.main = async (event) => {
+async function handleRelayEvent(event) {
   try {
     if (event.httpMethod && event.httpMethod !== "POST") {
       return jsonResponse(405, { statusText: "RELAY_METHOD_NOT_ALLOWED" });
@@ -228,4 +229,53 @@ exports.main = async (event) => {
     const code = typeof error.code === "string" ? error.code : error.name === "AbortError" ? "RELAY_TARGET_TIMEOUT" : "RELAY_INTERNAL_ERROR";
     return jsonResponse(statusCode, { statusText: code });
   }
-};
+}
+
+exports.main = handleRelayEvent;
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    request.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+    request.once("error", reject);
+    request.once("end", () => {
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+  });
+}
+
+function writeFunctionResponse(response, result) {
+  response.statusCode = result.statusCode;
+  for (const [key, value] of Object.entries(result.headers || {})) {
+    response.setHeader(key, value);
+  }
+
+  response.end(result.body);
+}
+
+async function startHttpServer() {
+  const http = require("node:http");
+  const server = http.createServer(async (request, response) => {
+    try {
+      const body = await readRequestBody(request);
+      const result = await handleRelayEvent({
+        httpMethod: request.method,
+        headers: request.headers,
+        body,
+        isBase64Encoded: false
+      });
+      writeFunctionResponse(response, result);
+    } catch {
+      writeFunctionResponse(response, jsonResponse(500, { statusText: "RELAY_INTERNAL_ERROR" }));
+    }
+  });
+
+  server.listen(SERVER_PORT, "0.0.0.0");
+}
+
+if (require.main === module) {
+  void startHttpServer();
+}

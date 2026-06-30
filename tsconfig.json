@@ -11,6 +11,9 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    "compilerOptions": {
+      "ignoreDeprecations": "6.0"
+    },
     "resolveJsonModule": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
