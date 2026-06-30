@@ -11,37 +11,35 @@ import { createPowerFeeRuntime } from "./services/powerfee/runtime.js";
 import type { TelegramNotifier } from "./services/telegram/notifier.js";
 
 let serverlessApp: Express | null = null;
+let webhookConfigured = false;
 
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function normalizeUrl(value: string): string {
+  const trimmedValue = value.trim();
+  return trimmedValue.startsWith("http://") || trimmedValue.startsWith("https://") ? trimmedValue : `https://${trimmedValue}`;
 }
 
-function readHeaderValue(value: string | string[] | undefined): string | undefined {
-  if (Array.isArray(value)) {
-    return readString(value[0]);
-  }
-
-  return readString(value);
+function resolveVercelBaseUrl(): string | null {
+  const url = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() || process.env.VERCEL_URL?.trim();
+  return url ? normalizeUrl(url) : null;
 }
 
-function readAdminToken(request: Request): string | undefined {
-  const authorization = readHeaderValue(request.headers.authorization);
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim();
+function configureServerlessWebhook(notifier: TelegramNotifier, logger: Logger): void {
+  if (webhookConfigured || !process.env.VERCEL || process.env.VERCEL_ENV === "preview") {
+    return;
   }
 
-  return readHeaderValue(request.headers["x-access-token"]) ?? readString(request.query.accessToken) ?? readString(request.query.cronSecret);
-}
-
-function assertTelegramAdminAuthorized(request: Request): void {
-  const expectedToken = env.accessToken ?? env.cronSecret;
-  if (!expectedToken) {
-    throw new HttpError(503, "TELEGRAM_ADMIN_TOKEN_NOT_CONFIGURED", "Telegram 管理令牌未配置。");
+  const baseUrl = resolveVercelBaseUrl();
+  if (!baseUrl) {
+    logger.warn("Telegram webhook auto configure skipped: Vercel URL is unavailable.");
+    return;
   }
 
-  if (readAdminToken(request) !== expectedToken) {
-    throw new HttpError(401, "UNAUTHORIZED", "Telegram 管理令牌无效。");
-  }
+  webhookConfigured = true;
+  void notifier.configureWebhook(baseUrl).catch((error: unknown) => {
+    webhookConfigured = false;
+    const message = error instanceof Error ? error.message : "Telegram webhook auto configure failed.";
+    logger.error(message);
+  });
 }
 
 export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel), telegramNotifier?: TelegramNotifier) {
@@ -55,21 +53,6 @@ export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.log
 
   app.use(healthRouter);
   if (telegramNotifier) {
-    app.all("/telegram/webhook/configure", async (request, response, next) => {
-      try {
-        assertTelegramAdminAuthorized(request);
-        const status = await telegramNotifier.configureWebhook();
-        const webhook = status === "disabled" ? null : await telegramNotifier.getWebhookInfo();
-
-        response.status(200).json({
-          status,
-          webhook
-        });
-      } catch (error) {
-        next(error);
-      }
-    });
-
     app.post("/telegram/webhook", async (request, response, next) => {
       try {
         await telegramNotifier.handleWebhookUpdate(request.body, request.headers["x-telegram-bot-api-secret-token"]);
@@ -99,6 +82,7 @@ function getServerlessApp(): Express {
   }
 
   const { logger, powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime();
+  configureServerlessWebhook(telegramNotifier, logger);
   serverlessApp = createApp(powerFeeMonitor, logger, telegramNotifier).app;
   return serverlessApp;
 }

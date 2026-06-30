@@ -134,7 +134,6 @@ export class TelegramNotifier {
   private started = false;
   private handlersRegistered = false;
   private subscribersLoadedPromise: Promise<void> | null = null;
-  private webhookConfiguredPromise: Promise<void> | null = null;
   private loginPromise: Promise<number> | null = null;
   private lastBalance: number | null = null;
   private pendingCaptcha: PendingCaptcha | null = null;
@@ -206,41 +205,18 @@ export class TelegramNotifier {
     await this.bot.handleUpdate(update as never);
   }
 
-  async configureWebhook(): Promise<"disabled" | "skipped" | "configured"> {
+  async configureWebhook(baseUrl: string): Promise<"disabled" | "configured"> {
     if (!this.bot) {
       return "disabled";
     }
 
-    if (!env.telegramWebhookUrl) {
-      return "skipped";
-    }
+    const webhookOptions = env.telegramWebhookSecret
+      ? { secret_token: env.telegramWebhookSecret, drop_pending_updates: false }
+      : { drop_pending_updates: false };
 
-    if (!this.webhookConfiguredPromise) {
-      const webhookOptions = env.telegramWebhookSecret
-        ? { secret_token: env.telegramWebhookSecret, drop_pending_updates: false }
-        : { drop_pending_updates: false };
-
-      this.webhookConfiguredPromise = this.bot.telegram
-        .setWebhook(buildTelegramWebhookUrl(env.telegramWebhookUrl), webhookOptions)
-        .then(() => {
-          this.logger.info("Telegram webhook configured.");
-        })
-        .catch((error: unknown) => {
-          this.webhookConfiguredPromise = null;
-          throw error;
-        });
-    }
-
-    await this.webhookConfiguredPromise;
+    await this.bot.telegram.setWebhook(buildTelegramWebhookUrl(baseUrl), webhookOptions);
+    this.logger.info("Telegram webhook configured.");
     return "configured";
-  }
-
-  async getWebhookInfo(): Promise<unknown> {
-    if (!this.bot) {
-      throw new HttpError(409, "TELEGRAM_DISABLED", "Telegram 机器人未配置。");
-    }
-
-    return this.bot.telegram.getWebhookInfo();
   }
 
   stop(reason: string): void {

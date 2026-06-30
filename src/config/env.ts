@@ -79,19 +79,6 @@ function parseBoolean(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be true or false.`);
 }
 
-function parseVercelUrl(value: string | undefined): string | null {
-  const trimmedValue = value?.trim();
-  if (!trimmedValue) {
-    return null;
-  }
-
-  return trimmedValue.startsWith("http://") || trimmedValue.startsWith("https://") ? trimmedValue : `https://${trimmedValue}`;
-}
-
-function parseDefaultTelegramWebhookUrl(): string | null {
-  return parseVercelUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL) ?? parseVercelUrl(process.env.VERCEL_URL);
-}
-
 function parseOptionalHttpUrl(name: string): string | null {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -140,7 +127,6 @@ export const env = {
   accessToken: parseOptionalString("ACCESS_TOKEN"),
   cronSecret: parseOptionalString("CRON_SECRET"),
   telegramBotToken: parseOptionalString("TELEGRAM_BOT_TOKEN"),
-  telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseDefaultTelegramWebhookUrl(),
   telegramWebhookSecret: parseOptionalString("TELEGRAM_WEBHOOK_SECRET"),
   telegramChatIds: parseOptionalStringList("TELEGRAM_CHAT_IDS"),
   serverlessStateSecret: parseOptionalString("SERVERLESS_STATE_SECRET"),

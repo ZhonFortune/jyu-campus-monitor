@@ -5,9 +5,9 @@
 嘉应学院宿舍电费余额监控服务。每 1 h 触发一次余额查询，并在余额低于阈值时通过 Telegram 发送提醒。<strong>你可以点击下方 Deploy 字样按钮使用 Vercel 平台一键部署服务并使用 [Github Action 触发](#github-actions-定时触发)定时操作以避免 Vercel Hobby 方案的限制</strong>
 <br>
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=USE_CN_PROXY,CHINA_RELAY_URL,CHINA_RELAY_SECRET,ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,USERNAME,PASSWORD,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,TELEGRAM_WEBHOOK_SECRET&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81CloudBase%20%E5%9B%9E%E5%9B%BD%E4%B8%AD%E7%BB%A7%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E3%80%81%E9%AA%8C%E8%AF%81%E7%A0%81%E7%99%BB%E5%BD%95%E5%92%8C%E5%AE%9A%E6%97%B6%E8%B0%83%E7%94%A8%E9%89%B4%E6%9D%83&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=USE_CN_PROXY,CHINA_RELAY_URL,CHINA_RELAY_SECRET,CRON_SECRET,TELEGRAM_BOT_TOKEN,USERNAME,PASSWORD,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,TELEGRAM_WEBHOOK_SECRET&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81CloudBase%20%E5%9B%9E%E5%9B%BD%E4%B8%AD%E7%BB%A7%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E3%80%81%E9%AA%8C%E8%AF%81%E7%A0%81%E7%99%BB%E5%BD%95%E5%92%8C%E5%AE%9A%E6%97%B6%E8%B0%83%E7%94%A8%E9%89%B4%E6%9D%83&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
 
-[强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true)
+[强密钥生成工具：用于填充 CRON_SECRET、CHINA_RELAY_SECRET 或可选的 ACCESS_TOKEN](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true)
 
 </center>
 
@@ -16,9 +16,10 @@
 ## 部分实现原理
 
 1. 服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
-2. 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、发送验证码并在用户回复 4 位验证码后完成登录；
-3. 服务使用 Vercel Storage 快速创建的 Neon Postgres 存储登录态、验证码挑战、房间解析缓存、提醒状态和 Telegram 订阅者。
-4. 一卡通接口访问通过 CloudBase 云函数 `china-relay` 作为国内中继节点完成。Vercel 将请求发送到 `CHINA_RELAY_URL`，云函数校验 `CHINA_RELAY_SECRET` 后传透请求与响应数据以避免 Vercel IP 被封禁。
+2. Vercel 冷启动时会自动将 Telegram Webhook 配置到 `/telegram/webhook`，预览部署不会抢占生产机器人。
+3. 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、发送验证码并在用户回复 4 位验证码后完成登录。
+4. 服务使用 Vercel Storage 快速创建的 Neon Postgres 存储登录态、验证码挑战、房间解析缓存、提醒状态和 Telegram 订阅者。
+5. 一卡通接口访问通过 CloudBase 云函数 `china-relay` 作为国内中继节点完成。Vercel 将请求发送到 `CHINA_RELAY_URL`，云函数校验 `CHINA_RELAY_SECRET` 后传透请求与响应数据以避免 Vercel IP 被封禁。
 
 <br>
 
@@ -27,7 +28,7 @@
 1. 创建 Telegram Bot，获取 `TELEGRAM_BOT_TOKEN`<br>
 2. Fork 本仓库<br>
 3. 准备一卡通登录账号与密码，分别填写 `USERNAME` 和 `PASSWORD`<br>
-4. 使用 [强密钥生成工具](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN`、`CRON_SECRET`、`CHINA_RELAY_SECRET`<br>
+4. 使用 [强密钥生成工具](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `CRON_SECRET`、`CHINA_RELAY_SECRET`。需要手动 HTTP 调试接口时再生成 `ACCESS_TOKEN`<br>
 5. 在 CloudBase 中部署 `cloudbase/functions/china-relay` 云函数，并设置 `CHINA_RELAY_SECRET`<br>
 6. 在 Vercel 中创建项目，绑定 Vercel Storage Neon Postgres，并设置[环境变量](#环境变量)<br>
 7. 向 Telegram 机器人发送 `/start`，根据图片输入 4 位验证码，完成登录并获取首次电费余额<br>
@@ -53,7 +54,6 @@
 | `ACCESS_TOKEN` | 手动调试接口访问令牌 | 无 | 否 |
 | `CRON_SECRET` | 定时调用 `/powerfee/cron` 的鉴权密钥 | 无 | Vercel 与 GitHub Actions 必填 |
 | `TELEGRAM_BOT_TOKEN` | Telegram 机器人访问密钥 | 无 | 启用通知必填 |
-| `TELEGRAM_WEBHOOK_URL` | Telegram Webhook 外部地址。Vercel 部署时默认读取 `VERCEL_URL`，本地轮询模式无需填写 | 无 | 否 |
 | `TELEGRAM_WEBHOOK_SECRET` | Telegram Webhook 请求校验密钥。公网 Webhook 建议配置 | 无 | 否 |
 | `TELEGRAM_CHAT_IDS` | 固定 Telegram 推送目标，多个 ID 使用英文逗号分隔 | 无 | 否 |
 | `POSTGRES_URL` | Vercel Storage Neon Postgres 连接地址。Vercel 绑定 Storage 后自动注入 | 无 | Vercel 必填 |
@@ -101,11 +101,23 @@ Vercel Serverless 环境不会在单次请求中等待用户回复验证码。`/
 
 <br>
 
+## Telegram Webhook
+
+Vercel 生产环境冷启动时会自动将 Telegram Webhook 指向服务接收地址。Vercel 部署完成不会主动执行代码，首次访问站点或 GitHub Actions 首次请求 `/powerfee/cron` 时会触发冷启动配置。
+
+```text
+https://<your-vercel-domain>/telegram/webhook
+```
+
+`TELEGRAM_WEBHOOK_SECRET` 用于校验 Telegram 入站请求，建议在 Vercel 环境变量中配置。
+
+<br>
+
 ## 本地开发
 
 以下用例假设服务已运行在默认地址 `http://localhost:6888` 上，并且 `.env` 中已配置有效的 `ACCESS_TOKEN`、一卡通账号密码、宿舍栋名称和房间号。调试推送需要配置 `TELEGRAM_BOT_TOKEN` 并向机器人发送 `/start` 完成登录。
 
-本地运行使用 Telegram long polling，不需要配置 `TELEGRAM_WEBHOOK_URL` 和 `TELEGRAM_WEBHOOK_SECRET`。
+本地运行使用 Telegram long polling，不需要配置 `TELEGRAM_WEBHOOK_SECRET`。
 
 本地未配置 `POSTGRES_URL` 时，状态会自动退回内存存储；Vercel 部署需使用 Neon Postgres 持久化状态。
 
