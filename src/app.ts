@@ -1,13 +1,16 @@
 import cors from "cors";
-import express from "express";
+import express, { type Express, type Request, type Response } from "express";
 import helmet from "helmet";
 import { env } from "./config/env.js";
 import { healthRouter } from "./routes/health.js";
 import { createPowerFeeRouter } from "./routes/powerfee.js";
 import { createErrorHandler, HttpError } from "./shared/error.js";
 import { createHttpLogger, Logger } from "./shared/logger.js";
-import { PowerFeeMonitor } from "./services/powerfee/monitor.js";
-import { TelegramNotifier } from "./services/telegram/notifier.js";
+import type { PowerFeeMonitor } from "./services/powerfee/monitor.js";
+import { createPowerFeeRuntime } from "./services/powerfee/runtime.js";
+import type { TelegramNotifier } from "./services/telegram/notifier.js";
+
+let serverlessApp: Express | null = null;
 
 export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel), telegramNotifier?: TelegramNotifier) {
   const app = express();
@@ -41,4 +44,23 @@ export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.log
   app.use(createErrorHandler(logger));
 
   return { app, logger };
+}
+
+function getServerlessApp(): Express {
+  if (serverlessApp) {
+    return serverlessApp;
+  }
+
+  const { logger, powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime();
+  void telegramNotifier.configureWebhook().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : "Telegram webhook configure failed.";
+    logger.error(message);
+  });
+
+  serverlessApp = createApp(powerFeeMonitor, logger, telegramNotifier).app;
+  return serverlessApp;
+}
+
+export default function handler(request: Request, response: Response): void {
+  getServerlessApp()(request, response);
 }

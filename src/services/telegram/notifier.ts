@@ -371,12 +371,12 @@ export class TelegramNotifier {
       }
 
       if (this.loginPromise) {
-        await context.reply("登录处理中，请根据提示输入验证码");
+        await context.reply("登录处理中，请稍后");
         this.logger.info(`Telegram command reply sent | command=/start | chatId=${context.chat.id} | reason=login_pending`);
         return;
       }
 
-      await context.reply("正在登录，请根据提示输入验证码");
+      await context.reply("正在获取登录接口，请稍后");
       void this.loginAndReply(context.chat.id);
     });
 
@@ -388,7 +388,7 @@ export class TelegramNotifier {
         return;
       }
 
-      await context.reply("电费提醒信息获取中...");
+      await context.reply("电费提醒信息获取中");
       void this.replyBalance(context.chat.id);
     });
 
@@ -468,7 +468,7 @@ export class TelegramNotifier {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Login failed.";
       this.logger.error(`Telegram login failed | chatId=${chatId} | cause=${message}`);
-      await bot.telegram.sendMessage(chatId, "登录失败，请重新发送 /start");
+      await bot.telegram.sendMessage(chatId, "登录失败，请检查代理或账号密码是否正确");
     }
   }
 

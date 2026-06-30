@@ -5,7 +5,7 @@
 嘉应学院宿舍电费余额监控服务。每 1 h 触发一次余额查询，并在余额低于阈值时通过 Telegram 发送提醒。<strong>你可以点击下方 Deploy 字样按钮使用 Vercel 平台一键部署服务并使用 [Github Action 触发](#github-actions-定时触发)定时操作以避免 Vercel Hobby 方案的限制</strong>
 <br>
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,USERNAME,PASSWORD,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,TELEGRAM_WEBHOOK_SECRET&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E3%80%81%E9%AA%8C%E8%AF%81%E7%A0%81%E7%99%BB%E5%BD%95%E5%92%8C%E5%AE%9A%E6%97%B6%E8%B0%83%E7%94%A8%E9%89%B4%E6%9D%83&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=USE_CN_PROXY,CHINA_RELAY_URL,CHINA_RELAY_SECRET,ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,USERNAME,PASSWORD,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,TELEGRAM_WEBHOOK_SECRET&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81CloudBase%20%E5%9B%9E%E5%9B%BD%E4%B8%AD%E7%BB%A7%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E3%80%81%E9%AA%8C%E8%AF%81%E7%A0%81%E7%99%BB%E5%BD%95%E5%92%8C%E5%AE%9A%E6%97%B6%E8%B0%83%E7%94%A8%E9%89%B4%E6%9D%83&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
 
 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true)
 
@@ -13,6 +13,7 @@
 
 > Vercel Hobby 不支持小时内多次执行的 Cron。服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
 > 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、执行登录并查询一次电费余额；后续定时任务会复用内存登录态，登录态失效时自动重新登录并再次推送验证码。
+> 一卡通接口访问通过 CloudBase 云函数 `china-relay` 作为国内中继节点完成。Vercel 将请求发送到 `CHINA_RELAY_URL`，云函数校验 `CHINA_RELAY_SECRET` 后传透请求与响应数据。
 
 <br>
 
@@ -21,11 +22,12 @@
 1. 创建 Telegram Bot，获取 `TELEGRAM_BOT_TOKEN`<br>
 2. Fork 本仓库<br>
 3. 准备一卡通登录账号与密码，分别填写 `USERNAME` 和 `PASSWORD`<br>
-4. 使用 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN`、`CRON_SECRET` 和可选的 `TELEGRAM_WEBHOOK_SECRET`<br>
-5. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
-6. 向 Telegram 机器人发送 `/start`，根据图片输入 4 位验证码，完成登录并获取首次电费余额<br>
-7. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `POWERFEE_CRON_URL` 与 `CRON_SECRET` 两个变量<br>
-> `POWERFEE_CRON_URL` 为 Vercel 定时触发地址，例如 `https://jyu-campus-monitor.vercel.app/powerfee/cron` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
+4. 使用 [强密钥生成工具](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN`、`CRON_SECRET`、`CHINA_RELAY_SECRET`<br>
+5. 在 CloudBase 中部署 `cloudbase/functions/china-relay` 云函数，并设置 `CHINA_RELAY_SECRET`<br>
+6. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
+7. 向 Telegram 机器人发送 `/start`，根据图片输入 4 位验证码，完成登录并获取首次电费余额<br>
+8. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `CRON_URL` 与 `CRON_SECRET` 两个变量<br>
+> `CRON_URL` 为 Vercel 定时触发地址，例如 `https://jyu-campus-monitor.vercel.app/powerfee/cron` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
 
 <br>
 
@@ -40,6 +42,9 @@
 | `PORT` | 本地服务端口 | `6888` | 否 |
 | `LOG_LEVEL` | 日志级别：`DEBUG`、`INFO`、`WARN`、`ERROR` | `INFO` | 否 |
 | `CORS_ORIGIN` | 跨域来源 | `*` | 否 |
+| `USE_CN_PROXY` | 是否通过 CloudBase 国内中继访问一卡通接口 | `false` | 建议设置为 `true` |
+| `CHINA_RELAY_URL` | CloudBase `china-relay` 云函数 HTTP 访问地址 | 无 | 使用中继时必填 |
+| `CHINA_RELAY_SECRET` | Vercel 与 CloudBase 云函数之间的共享鉴权密钥 | 无 | Vercel 与 CloudBase 必填且值相同 |
 | `ACCESS_TOKEN` | 手动调试接口访问令牌 | 无 | 否 |
 | `CRON_SECRET` | 定时调用 `/powerfee/cron` 的鉴权密钥 | 无 | Vercel 与 GitHub Actions 必填 |
 | `TELEGRAM_BOT_TOKEN` | Telegram 机器人访问密钥 | 无 | 启用通知必填 |
@@ -51,6 +56,13 @@
 | `POWER_FEE_REPEAT_THRESHOLD` | 二次提醒阈值，单位：元 | `10` | 否 |
 | `DORM_BUILDING_NAME` | 宿舍栋名称 | 无 | 是 |
 | `ROOM_NUMBER` | 房间号 | 无 | 是 |
+
+CloudBase 云函数需设置：
+
+| 变量 | 说明 | 默认值 | 必填 |
+| --- | --- | --- | --- |
+| `CHINA_RELAY_SECRET` | 与 Vercel `CHINA_RELAY_SECRET` 完全一致的共享鉴权密钥 | 无 | 是 |
+| `ALLOWED_TARGET_HOSTS` | 允许中继访问的目标域名，英文逗号分隔 | `yktportal.jyu.edu.cn` | 否 |
 
 <br>
 
@@ -145,12 +157,24 @@ curl -X POST "http://localhost:6888/powerfee/fetch" \
 
 | Secret | 说明 |
 | --- | --- |
-| `POWERFEE_CRON_URL` | Vercel 部署后的完整触发地址，例如 `https://<your-vercel-domain>/powerfee/cron` |
+| `CRON_URL` | Vercel 部署后的完整触发地址，例如 `https://<your-vercel-domain>/powerfee/cron` |
 | `CRON_SECRET` | 与 Vercel 环境变量 `CRON_SECRET` 保持一致 |
 
-工作流会每 1 h 自动请求一次 `POWERFEE_CRON_URL`。手动验证时使用同一个密钥：
+工作流会每 1 h 自动请求一次 `CRON_URL`。手动验证时使用同一个密钥：
 
 ```bash
 curl -X GET "https://<your-vercel-domain>/powerfee/cron" \
   -H "Authorization: Bearer <CRON_SECRET>"
 ```
+
+## GitHub Actions 部署 CloudBase 中继
+
+在 GitHub 仓库的 `Settings`、`Secrets and variables`、`Actions` 中添加以下 Secrets：
+
+| Secret | 说明 |
+| --- | --- |
+| `TENCENT_SECRET_ID` | 腾讯云 API SecretId |
+| `TENCENT_SECRET_KEY` | 腾讯云 API SecretKey |
+| `CLOUDBASE_ENV_ID` | CloudBase 环境 ID |
+
+`Deploy CloudBase Relay` 工作流会在 `cloudbase/functions/china-relay/**` 或 `.github/workflows/cloudbase.yml` 变更后部署 `china-relay` 云函数，也可手动触发。

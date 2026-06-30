@@ -17,15 +17,15 @@ jobs:
       - name: Trigger balance check
         shell: bash
         env:
-          POWERFEE_CRON_URL: ${{ secrets.POWERFEE_CRON_URL }}
+          CRON_URL: ${{ secrets.CRON_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
 
-          cron_base="$(printf '%s' "${POWERFEE_CRON_URL}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          cron_base="$(printf '%s' "${CRON_URL}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
           if [ -z "${cron_base}" ]; then
-            echo "POWERFEE_CRON_URL is required."
+            echo "CRON_URL is required."
             exit 1
           fi
 

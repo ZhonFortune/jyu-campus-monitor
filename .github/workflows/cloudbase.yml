@@ -1,0 +1,36 @@
+name: Deploy CloudBase Relay
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "cloudbase/functions/china-relay/**"
+      - ".github/workflows/cloudbase.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-china-relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy relay function
+        env:
+          TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$TENCENT_SECRET_ID"
+          test -n "$TENCENT_SECRET_KEY"
+          test -n "$CLOUDBASE_ENV_ID"
+          npx -y @cloudbase/cli@latest functions:deploy china-relay --dir cloudbase/functions/china-relay --envId "$CLOUDBASE_ENV_ID"

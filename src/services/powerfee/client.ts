@@ -2,8 +2,7 @@ import crypto from "node:crypto";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
-import { requestThroughHttpProxy } from "../proxy/http.js";
-import { selectChinaHttpProxies, type HttpProxy } from "../proxy/provider.js";
+import { requestThroughChinaRelay } from "../proxy/relay.js";
 
 const YKT_ORIGIN = "https://yktportal.jyu.edu.cn";
 const LOGIN_PAGE_URL = `${YKT_ORIGIN}/sso//login?t=12&redirectUrl=${encodeURIComponent(`${YKT_ORIGIN}/user/powerfee/index`)}`;
@@ -12,7 +11,6 @@ const LOGIN_SUBMIT_URL = `${YKT_ORIGIN}/sso/doLogin`;
 const BALANCE_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getBalance";
 const ROOM_INFO_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getRoomInfo";
 const REQUEST_TIMEOUT_MS = 15_000;
-const PROXY_CANDIDATE_LIMIT = 8;
 const RESPONSE_PREVIEW_LIMIT = 800;
 const WECHAT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541a1f) XWEB/25047 miniProgram/wx84ddfd51a823dc58";
@@ -176,9 +174,6 @@ async function requestDirect(url: string, init: YktRequestInit = {}): Promise<Yk
 }
 
 class YktRequestClient {
-  private proxiesPromise: Promise<HttpProxy[]> | null = null;
-  private preferredProxy: HttpProxy | null = null;
-
   constructor(private readonly logger: Logger) {}
 
   async request(url: string, init: YktRequestInit = {}): Promise<YktRequestResponse> {
@@ -186,62 +181,15 @@ class YktRequestClient {
       return requestDirect(url, init);
     }
 
-    const proxies = this.orderProxies(await this.getProxies());
-    if (proxies.length === 0) {
-      throw new HttpError(502, "CHINA_HTTP_PROXY_UNAVAILABLE", "回国代理不可用。");
-    }
-
-    let lastError: unknown = null;
-    for (const proxy of proxies) {
-      try {
-        const proxyRequest = {
-          url,
-          headers: init.headers ?? {},
-          timeoutMs: REQUEST_TIMEOUT_MS,
-          proxy,
-          logger: this.logger
-        };
-        const response = await requestThroughHttpProxy({
-          ...proxyRequest,
-          ...(init.method ? { method: init.method } : {}),
-          ...(init.body ? { body: init.body } : {})
-        });
-        this.preferredProxy = proxy;
-
-        return {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-          setCookieHeaders: response.setCookieHeaders,
-          body: response.body,
-          text: response.text
-        };
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    throw lastError instanceof HttpError ? lastError : new HttpError(502, "CHINA_HTTP_PROXY_UNAVAILABLE", "回国代理不可用。");
-  }
-
-  private async getProxies(): Promise<HttpProxy[]> {
-    if (!this.proxiesPromise) {
-      this.proxiesPromise = selectChinaHttpProxies(this.logger, PROXY_CANDIDATE_LIMIT);
-    }
-
-    return this.proxiesPromise;
-  }
-
-  private orderProxies(proxies: HttpProxy[]): HttpProxy[] {
-    const preferredProxy = this.preferredProxy;
-    if (!preferredProxy) {
-      return proxies;
-    }
-
-    return [
-      preferredProxy,
-      ...proxies.filter((proxy) => proxy.host !== preferredProxy.host || proxy.port !== preferredProxy.port || proxy.protocol !== preferredProxy.protocol)
-    ];
+    return requestThroughChinaRelay({
+      url,
+      headers: init.headers ?? {},
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      logger: this.logger,
+      ...(init.method ? { method: init.method } : {}),
+      ...(init.body ? { body: init.body } : {}),
+      ...(init.redirect ? { redirect: init.redirect } : {})
+    });
   }
 }
 
