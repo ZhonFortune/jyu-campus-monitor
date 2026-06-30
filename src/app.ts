@@ -7,8 +7,9 @@ import { createPowerFeeRouter } from "./routes/powerfee.js";
 import { createErrorHandler, HttpError } from "./shared/error.js";
 import { createHttpLogger, Logger } from "./shared/logger.js";
 import { PowerFeeMonitor } from "./services/powerfee/monitor.js";
+import { TelegramNotifier } from "./services/telegram/notifier.js";
 
-export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel)) {
+export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.logLevel), telegramNotifier?: TelegramNotifier) {
   const app = express();
 
   app.disable("x-powered-by");
@@ -18,6 +19,17 @@ export function createApp(monitor?: PowerFeeMonitor, logger = new Logger(env.log
   app.use(createHttpLogger(logger));
 
   app.use(healthRouter);
+  if (telegramNotifier) {
+    app.post("/telegram/webhook", async (request, response, next) => {
+      try {
+        await telegramNotifier.handleWebhookUpdate(request.body, request.headers["x-telegram-bot-api-secret-token"]);
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
+
   if (monitor) {
     app.use(createPowerFeeRouter(monitor));
   }

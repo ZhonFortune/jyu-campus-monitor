@@ -57,6 +57,14 @@ export class PowerFeeMonitor {
     return balanceResult.balance;
   }
 
+  async initializeSession(): Promise<void> {
+    await this.client.initializeSession();
+  }
+
+  isSessionReady(): boolean {
+    return this.client.isSessionReady();
+  }
+
   private scheduleNextRun(): void {
     const delay = randomDelay();
     this.nextRunAt = new Date(Date.now() + delay);
@@ -67,6 +75,11 @@ export class PowerFeeMonitor {
 
   private async runScheduledCheck(): Promise<void> {
     try {
+      if (!this.client.isSessionReady()) {
+        this.logger.info("Power fee monitor skipped: session not initialized.");
+        return;
+      }
+
       await this.check({ debugPush: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown monitor error.";

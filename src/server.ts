@@ -5,7 +5,7 @@ import { createPowerFeeRuntime } from "./services/powerfee/runtime.js";
 
 const bootstrapLogger = new Logger(env.logLevel);
 const { powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime(bootstrapLogger);
-const { app, logger } = createApp(powerFeeMonitor, bootstrapLogger);
+const { app, logger } = createApp(powerFeeMonitor, bootstrapLogger, telegramNotifier);
 
 const server = app.listen(env.port, () => {
   logger.info(`Server listening on port ${env.port}`);
@@ -21,13 +21,12 @@ async function startTelegram(): Promise<void> {
       return;
     }
 
-    const balance = await getStartupBalance();
     const healthCheckStatus = await telegramNotifier.sendStartupHealthCheck({
       dormBuildingName: env.dormBuildingName,
       roomNumber: env.roomNumber,
       remindThreshold: env.powerFeeRemindThreshold,
       repeatThreshold: env.powerFeeRepeatThreshold,
-      balance
+      balance: null
     });
 
     if (healthCheckStatus === "sent") {
@@ -44,16 +43,6 @@ async function startTelegram(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Telegram bot failed to start.";
     logger.error(message);
-  }
-}
-
-async function getStartupBalance(): Promise<number | null> {
-  try {
-    return await powerFeeMonitor.getCurrentBalance();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Startup balance check failed.";
-    logger.warn(`Telegram startup health check balance skipped: ${message}`);
-    return null;
   }
 }
 

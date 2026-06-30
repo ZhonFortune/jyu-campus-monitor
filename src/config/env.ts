@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ override: true });
 
 type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -50,6 +50,15 @@ function parseOptionalString(name: string): string | null {
   return value || null;
 }
 
+function parseVercelUrl(value: string | undefined): string | null {
+  const trimmedValue = value?.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  return trimmedValue.startsWith("http://") || trimmedValue.startsWith("https://") ? trimmedValue : `https://${trimmedValue}`;
+}
+
 function parsePositiveNumber(name: string, defaultValue: number): number {
   const rawValue = process.env[name]?.trim();
   if (!rawValue) {
@@ -84,6 +93,10 @@ export const env = {
   accessToken: parseOptionalString("ACCESS_TOKEN"),
   cronSecret: parseOptionalString("CRON_SECRET"),
   telegramBotToken: parseOptionalString("TELEGRAM_BOT_TOKEN"),
+  telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseVercelUrl(process.env.VERCEL_URL),
+  telegramWebhookSecret: parseOptionalString("TELEGRAM_WEBHOOK_SECRET"),
+  username: parseRequiredString("USERNAME"),
+  password: parseRequiredString("PASSWORD"),
   powerFeeRemindThreshold: thresholds.remindThreshold,
   powerFeeRepeatThreshold: thresholds.repeatThreshold,
   schoolAreaNo: process.env.SCHOOL_AREA_NO?.trim() || DEFAULT_SCHOOL_AREA_NO,

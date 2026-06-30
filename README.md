@@ -5,14 +5,14 @@
 嘉应学院宿舍电费余额监控服务。每 1 h 触发一次余额查询，并在余额低于阈值时通过 Telegram 发送提醒。<strong>你可以点击下方 Deploy 字样按钮使用 Vercel 平台一键部署服务并使用 [Github Action 触发](#github-actions-定时触发)定时操作以避免 Vercel Hobby 方案的限制</strong>
 <br>
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E5%92%8C%20Vercel%20Cron%20%E9%89%B4%E6%9D%83%E5%AF%86%E9%92%A5&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor.git&project-name=jyu-campus-monitor&repository-name=jyu-campus-monitor&env=ACCESS_TOKEN,CRON_SECRET,TELEGRAM_BOT_TOKEN,USERNAME,PASSWORD,DORM_BUILDING_NAME,ROOM_NUMBER,POWER_FEE_REMIND_THRESHOLD,POWER_FEE_REPEAT_THRESHOLD,TELEGRAM_WEBHOOK_SECRET&envDescription=%E9%85%8D%E7%BD%AE%E5%AE%BF%E8%88%8D%E7%94%B5%E8%B4%B9%E6%9F%A5%E8%AF%A2%E3%80%81Telegram%20%E6%8E%A8%E9%80%81%E3%80%81%E9%AA%8C%E8%AF%81%E7%A0%81%E7%99%BB%E5%BD%95%E5%92%8C%E5%AE%9A%E6%97%B6%E8%B0%83%E7%94%A8%E9%89%B4%E6%9D%83&envLink=https%3A%2F%2Fgithub.com%2FZhonFortune%2Fjyu-campus-monitor%23%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F)
 
 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true)
 
 </center>
 
 > Vercel Hobby 不支持小时内多次执行的 Cron。服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
-> 余额请求会自动选择回国 SOCKS5 节点，Telegram 推送仍由 Vercel 直连完成，避免 Vercel 节点 IP 被封。
+> 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、执行登录并查询一次电费余额；后续定时任务会复用内存登录态，登录态失效时自动重新登录并再次推送验证码。
 
 <br>
 
@@ -20,15 +20,16 @@
 
 1. 创建 Telegram Bot，获取 `TELEGRAM_BOT_TOKEN`<br>
 2. Fork 本仓库<br>
-3. 使用 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN` 和 `CRON_SECRET`<br>
-4. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
-5. 向 Telegram 机器人发送 `/start` 完成接收登记<br>
-6. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `POWERFEE_CRON_URL` 与 `CRON_SECRET` 两个变量<br>
-> `POWERFEE_CRON_URL` 为 Vercel 项目地址，例如 `https://jyu-campus-monitor.vercel.app` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
+3. 准备一卡通登录账号与密码，分别填写 `USERNAME` 和 `PASSWORD`<br>
+4. 使用 [强密钥生成工具：用于填充ACCESS_TOKEN或CRON_SECRET](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN`、`CRON_SECRET` 和可选的 `TELEGRAM_WEBHOOK_SECRET`<br>
+5. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
+6. 向 Telegram 机器人发送 `/start`，根据图片输入 4 位验证码，完成登录并获取首次电费余额<br>
+7. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `POWERFEE_CRON_URL` 与 `CRON_SECRET` 两个变量<br>
+> `POWERFEE_CRON_URL` 为 Vercel 定时触发地址，例如 `https://jyu-campus-monitor.vercel.app/powerfee/cron` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
 
 <br>
 
-随后 Deploy 项目即可
+随后 Deploy 项目即可。<strong>服务启动后不会自动登录；登录入口统一为 Telegram `/start` 登陆后将会保存登录状态，除非服务重启否则无需重新登录</strong>
 
 <br>
 
@@ -41,10 +42,13 @@
 | `CORS_ORIGIN` | 跨域来源 | `*` | 否 |
 | `ACCESS_TOKEN` | 手动调试接口访问令牌 | 无 | 否 |
 | `CRON_SECRET` | 定时调用 `/powerfee/cron` 的鉴权密钥 | 无 | Vercel 与 GitHub Actions 必填 |
-| `TELEGRAM_BOT_TOKEN` | Telegram 机器人访问密钥 | 无 | 否 |
+| `TELEGRAM_BOT_TOKEN` | Telegram 机器人访问密钥 | 无 | 启用通知必填 |
+| `TELEGRAM_WEBHOOK_URL` | Telegram Webhook 外部地址。Vercel 部署时默认读取 `VERCEL_URL`，本地轮询模式无需填写 | 无 | 否 |
+| `TELEGRAM_WEBHOOK_SECRET` | Telegram Webhook 请求校验密钥。公网 Webhook 建议配置 | 无 | 否 |
+| `USERNAME` | 一卡通登录账号 | 无 | 是 |
+| `PASSWORD` | 一卡通登录密码 | 无 | 是 |
 | `POWER_FEE_REMIND_THRESHOLD` | 首次提醒阈值，单位：元 | `20` | 否 |
 | `POWER_FEE_REPEAT_THRESHOLD` | 二次提醒阈值，单位：元 | `10` | 否 |
-| `SCHOOL_AREA_NO` | 校区编号 | `1` | 否 |
 | `DORM_BUILDING_NAME` | 宿舍栋名称 | 无 | 是 |
 | `ROOM_NUMBER` | 房间号 | 无 | 是 |
 
@@ -60,15 +64,30 @@
 使用自定义菜单添加以下已受支持的命令以完成快速操作
 
 ```text
-/start  登记接收会话并查看运行状态
-/left   查询当前电费余额
+/start  注册会话；未登录时执行登录并查询一次电费；已登录时查看运行状态
+/left   已登录时查询当前电费余额
 ```
+
+命令行为：
+
+| 命令 | 行为 |
+| --- | --- |
+| `/start` | 注册 Telegram 会话。未登录时发送验证码图片，登录成功后缓存凭证并返回当前电费状态。已登录时直接返回“电费提醒已就绪”状态。 |
+| `/left` | 未登录时提示先发送 `/start`。已登录时查询当前电费余额。 |
+
+定时任务只在已有内存登录态后执行。若查询时发现登录态失效，服务会清理旧凭证、重新登录、重新发送验证码，并在登录成功后继续本次查询与阈值提醒。
 
 <br>
 
 ## 本地开发
 
-以下用例假设服务已运行在默认地址 `http://localhost:6888`上，并且 `.env` 中已配置有效的 `ACCESS_TOKEN`、宿舍栋名称和房间号。调试推送需要配置 `TELEGRAM_BOT_TOKEN` 并向机器人发送 `/start`。
+以下用例假设服务已运行在默认地址 `http://localhost:6888` 上，并且 `.env` 中已配置有效的 `ACCESS_TOKEN`、一卡通账号密码、宿舍栋名称和房间号。调试推送需要配置 `TELEGRAM_BOT_TOKEN` 并向机器人发送 `/start` 完成登录。
+
+本地运行使用 Telegram long polling，不需要配置 `TELEGRAM_WEBHOOK_URL` 和 `TELEGRAM_WEBHOOK_SECRET`。
+
+```bash
+npm run dev
+```
 
 ### 1. 仅抓取一次电费余额
 
