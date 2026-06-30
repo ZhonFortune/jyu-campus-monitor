@@ -1,10 +1,12 @@
 import { env } from "../../config/env.js";
 import { Logger } from "../../shared/logger.js";
+import { getState, setState } from "../../shared/state-store.js";
 import { TelegramNotifier } from "../telegram/notifier.js";
 import { PowerFeeClient, type PowerFeeBalance, type PowerFeeLocation } from "./client.js";
 
 const MIN_INTERVAL_MS = 30 * 60 * 1000;
 const MAX_INTERVAL_MS = 60 * 60 * 1000;
+const ALERT_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
 export type ManualPowerFeeCheckOptions = {
   debugPush: boolean;
@@ -18,6 +20,11 @@ export type PowerFeeCheckResult = {
   debugPushed: boolean;
   nextRunAt: string | null;
   raw: unknown;
+};
+
+type AlertState = {
+  reminderSent: boolean;
+  repeatReminderSent: boolean;
 };
 
 export class PowerFeeMonitor {
@@ -55,6 +62,15 @@ export class PowerFeeMonitor {
     const balanceResult = await this.client.getBalance(location);
     this.logger.info(`Power fee balance query completed | source=command | balance=${balanceResult.balance.toFixed(2)}`);
     return balanceResult.balance;
+  }
+
+  async createLoginCaptcha(): Promise<Buffer> {
+    return this.client.createLoginChallenge();
+  }
+
+  async completeLoginCaptcha(captchaCode: string): Promise<number> {
+    await this.client.completeLoginChallenge(captchaCode);
+    return this.getCurrentBalance();
   }
 
   async initializeSession(): Promise<void> {
@@ -131,31 +147,35 @@ export class PowerFeeMonitor {
     roomNumber: string
   ): Promise<{ reminded: boolean; repeated: boolean }> {
     const { balance } = balanceResult;
+    const alertStateKey = buildAlertStateKey(dormBuildingName, roomNumber);
+    const persistedState = await getState<AlertState>(alertStateKey);
+    const reminderSent = persistedState?.reminderSent ?? this.reminderSent;
+    const repeatReminderSent = persistedState?.repeatReminderSent ?? this.repeatReminderSent;
     this.logger.info(
       [
         "Power fee threshold evaluated",
         `balance=${balance.toFixed(2)}`,
         `remindThreshold=${env.powerFeeRemindThreshold.toFixed(2)}`,
         `repeatThreshold=${env.powerFeeRepeatThreshold.toFixed(2)}`,
-        `reminderSent=${this.reminderSent}`,
-        `repeatReminderSent=${this.repeatReminderSent}`
+        `reminderSent=${reminderSent}`,
+        `repeatReminderSent=${repeatReminderSent}`
       ].join(" | ")
     );
 
     if (balance >= env.powerFeeRemindThreshold) {
-      if (this.reminderSent || this.repeatReminderSent) {
+      if (reminderSent || repeatReminderSent) {
         this.logger.info(`Power fee threshold state reset | balance=${balance.toFixed(2)}`);
       }
-      this.reminderSent = false;
-      this.repeatReminderSent = false;
+      await this.saveAlertState(alertStateKey, { reminderSent: false, repeatReminderSent: false });
       return { reminded: false, repeated: false };
     }
 
     let reminded = false;
     let repeated = false;
-    const reminderWasAlreadySent = this.reminderSent;
+    let nextState: AlertState = { reminderSent, repeatReminderSent };
+    const reminderWasAlreadySent = reminderSent;
 
-    if (!this.reminderSent) {
+    if (!reminderSent) {
       this.logger.info(`Power fee first threshold action triggered | balance=${balance.toFixed(2)}`);
       await this.notifier.sendPowerFeeAlert({
         balance,
@@ -165,12 +185,12 @@ export class PowerFeeMonitor {
         repeatThreshold: env.powerFeeRepeatThreshold,
         reason: "remind"
       });
-      this.reminderSent = true;
+      nextState = { ...nextState, reminderSent: true };
       reminded = true;
       this.logger.info(`Power fee first threshold action completed | balance=${balance.toFixed(2)}`);
     }
 
-    if (reminderWasAlreadySent && balance < env.powerFeeRepeatThreshold && !this.repeatReminderSent) {
+    if (reminderWasAlreadySent && balance < env.powerFeeRepeatThreshold && !repeatReminderSent) {
       this.logger.info(`Power fee repeat threshold action triggered | balance=${balance.toFixed(2)}`);
       for (let index = 0; index < 3; index += 1) {
         await this.notifier.sendPowerFeeAlert({
@@ -183,12 +203,19 @@ export class PowerFeeMonitor {
         });
       }
 
-      this.repeatReminderSent = true;
+      nextState = { ...nextState, repeatReminderSent: true };
       repeated = true;
       this.logger.info(`Power fee repeat threshold action completed | balance=${balance.toFixed(2)}`);
     }
 
+    await this.saveAlertState(alertStateKey, nextState);
     return { reminded, repeated };
+  }
+
+  private async saveAlertState(key: string, state: AlertState): Promise<void> {
+    this.reminderSent = state.reminderSent;
+    this.repeatReminderSent = state.repeatReminderSent;
+    await setState(key, state, { ttlMs: ALERT_STATE_TTL_MS });
   }
 }
 
@@ -203,4 +230,8 @@ function buildLocation(location?: Partial<PowerFeeLocation>): PowerFeeLocation {
 function randomDelay(): number {
   const span = MAX_INTERVAL_MS - MIN_INTERVAL_MS;
   return MIN_INTERVAL_MS + Math.floor(Math.random() * (span + 1));
+}
+
+function buildAlertStateKey(dormBuildingName: string, roomNumber: string): string {
+  return `powerfee:alert:${env.schoolAreaNo}:${dormBuildingName}:${roomNumber}`;
 }

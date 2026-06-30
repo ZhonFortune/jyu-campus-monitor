@@ -5,6 +5,7 @@ import { Telegraf } from "telegraf";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
+import { getState, setState } from "../../shared/state-store.js";
 
 export type PowerFeeNotification = {
   balance: number;
@@ -33,6 +34,8 @@ export type TelegramStatusConfig = {
 type BalanceProvider = () => Promise<number>;
 type LoginProvider = () => Promise<number>;
 type LoginStatusProvider = () => boolean;
+type LoginCaptchaProvider = () => Promise<Buffer>;
+type LoginCaptchaSubmitProvider = (captchaCode: string) => Promise<number>;
 type PendingCaptcha = {
   chatIds: ReadonlySet<string>;
   resolve: (value: string) => void;
@@ -45,6 +48,7 @@ const SUBSCRIBER_STORE_PATH =
   path.join(process.env.VERCEL ? os.tmpdir() : process.cwd(), ".cache", "telegram", "subscribers.json");
 const CAPTCHA_TIMEOUT_MS = 2 * 60 * 1000;
 const TELEGRAM_WEBHOOK_PATH = "/telegram/webhook";
+const SUBSCRIBER_STATE_KEY = "telegram:subscribers";
 
 function formatAmount(value: number): string {
   return value.toFixed(2);
@@ -125,6 +129,8 @@ export class TelegramNotifier {
   private balanceProvider: BalanceProvider | null = null;
   private loginProvider: LoginProvider | null = null;
   private loginStatusProvider: LoginStatusProvider | null = null;
+  private loginCaptchaProvider: LoginCaptchaProvider | null = null;
+  private loginCaptchaSubmitProvider: LoginCaptchaSubmitProvider | null = null;
   private started = false;
   private handlersRegistered = false;
   private subscribersLoadedPromise: Promise<void> | null = null;
@@ -153,9 +159,16 @@ export class TelegramNotifier {
     this.balanceProvider = balanceProvider;
   }
 
-  setLoginProvider(loginProvider: LoginProvider, loginStatusProvider: LoginStatusProvider): void {
+  setLoginProvider(
+    loginProvider: LoginProvider,
+    loginStatusProvider: LoginStatusProvider,
+    loginCaptchaProvider?: LoginCaptchaProvider,
+    loginCaptchaSubmitProvider?: LoginCaptchaSubmitProvider
+  ): void {
     this.loginProvider = loginProvider;
     this.loginStatusProvider = loginStatusProvider;
+    this.loginCaptchaProvider = loginCaptchaProvider ?? null;
+    this.loginCaptchaSubmitProvider = loginCaptchaSubmitProvider ?? null;
   }
 
   async start(): Promise<boolean> {
@@ -391,13 +404,19 @@ export class TelegramNotifier {
         return;
       }
 
+      if (this.isServerlessLoginEnabled()) {
+        await context.reply("正在获取验证码");
+        void this.requestLoginCaptchaAndReply(context.chat.id);
+        return;
+      }
+
       await context.reply("正在获取登录接口，请稍后");
       void this.loginAndReply(context.chat.id);
     });
 
     this.bot.command("left", async (context) => {
       this.logger.info(`Telegram command received | command=/left | chatId=${context.chat.id}`);
-      if (!this.isLoggedIn()) {
+      if (!this.isLoggedIn() && !process.env.VERCEL) {
         await context.reply("请先发送 /start 完成登录");
         this.logger.info(`Telegram command reply sent | command=/left | chatId=${context.chat.id} | reason=session_required`);
         return;
@@ -416,6 +435,19 @@ export class TelegramNotifier {
 
       const pendingCaptcha = this.pendingCaptcha;
       if (!pendingCaptcha) {
+        if (this.isServerlessLoginEnabled()) {
+          const code = normalizeCaptchaCode(text);
+          if (!code) {
+            this.logger.info(`Telegram text rejected | chatId=${chatId} | reason=invalid_login_captcha_code`);
+            await context.reply("请输入 4 位数字验证码");
+            return;
+          }
+
+          await context.reply("登陆中，请稍候");
+          void this.completeServerlessLoginAndReply(context.chat.id, code);
+          return;
+        }
+
         this.logger.info(`Telegram text ignored | chatId=${chatId} | reason=no_pending_captcha`);
         await context.reply("当前没有待处理的验证码");
         return;
@@ -444,6 +476,10 @@ export class TelegramNotifier {
 
   private isLoggedIn(): boolean {
     return this.loginStatusProvider?.() ?? false;
+  }
+
+  private isServerlessLoginEnabled(): boolean {
+    return Boolean(process.env.VERCEL && this.loginCaptchaProvider && this.loginCaptchaSubmitProvider);
   }
 
   private async registerChat(chatId: number | string): Promise<void> {
@@ -487,6 +523,56 @@ export class TelegramNotifier {
     }
   }
 
+  private async requestLoginCaptchaAndReply(chatId: number | string): Promise<void> {
+    const bot = this.bot;
+    if (!bot || !this.loginCaptchaProvider) {
+      return;
+    }
+
+    try {
+      const captcha = await this.loginCaptchaProvider();
+      await bot.telegram.sendPhoto(chatId, { source: captcha }, {
+        caption: `请直接回复本消息中的 4 位数字\n当前账号：${env.username}`,
+        reply_markup: {
+          force_reply: true,
+          input_field_placeholder: "输入 4 位验证码"
+        }
+      });
+      this.logger.info(`Telegram serverless login captcha sent | chatId=${chatId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Captcha request failed.";
+      this.logger.error(`Telegram serverless login captcha failed | chatId=${chatId} | cause=${message}`);
+      await bot.telegram.sendMessage(chatId, "验证码获取失败，请稍后重试");
+    }
+  }
+
+  private async completeServerlessLoginAndReply(chatId: number | string, captchaCode: string): Promise<void> {
+    const bot = this.bot;
+    if (!bot || !this.loginCaptchaSubmitProvider) {
+      return;
+    }
+
+    try {
+      const balance = await this.loginCaptchaSubmitProvider(captchaCode);
+      this.lastBalance = balance;
+      await bot.telegram.sendMessage(
+        chatId,
+        formatStatusMessage({
+          dormBuildingName: this.status.dormBuildingName,
+          roomNumber: this.status.roomNumber,
+          remindThreshold: this.status.remindThreshold,
+          repeatThreshold: this.status.repeatThreshold,
+          balance
+        })
+      );
+      this.logger.info(`Telegram serverless login completed | chatId=${chatId} | balance=${formatLogBalance(balance)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Login failed.";
+      this.logger.error(`Telegram serverless login failed | chatId=${chatId} | cause=${message}`);
+      await bot.telegram.sendMessage(chatId, "登录失败，请重新发送 /start 获取验证码");
+    }
+  }
+
   private async replyBalance(chatId: number | string): Promise<void> {
     const bot = this.bot;
     if (!bot) {
@@ -522,6 +608,18 @@ export class TelegramNotifier {
   }
 
   private async loadSubscribers(): Promise<void> {
+    const persistedSubscribers = await getState<readonly string[]>(SUBSCRIBER_STATE_KEY);
+    if (Array.isArray(persistedSubscribers)) {
+      for (const value of persistedSubscribers) {
+        const chatId = normalizeChatId(value);
+        if (chatId) {
+          this.subscriberChatIds.add(chatId);
+        }
+      }
+      this.logger.info(`Telegram subscribers loaded | source=postgres | subscribers=${this.subscriberChatIds.size}`);
+      return;
+    }
+
     try {
       const text = await readFile(SUBSCRIBER_STORE_PATH, "utf8");
       const payload = JSON.parse(text) as unknown;
@@ -550,9 +648,17 @@ export class TelegramNotifier {
   }
 
   private async saveSubscribers(): Promise<void> {
+    const subscribers = Array.from(this.subscriberChatIds);
+    try {
+      await setState(SUBSCRIBER_STATE_KEY, subscribers);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Subscriber database save failed.";
+      this.logger.warn(`Telegram subscribers database save failed | cause=${message}`);
+    }
+
     try {
       await mkdir(path.dirname(SUBSCRIBER_STORE_PATH), { recursive: true });
-      await writeFile(SUBSCRIBER_STORE_PATH, JSON.stringify(Array.from(this.subscriberChatIds), null, 2), "utf8");
+      await writeFile(SUBSCRIBER_STORE_PATH, JSON.stringify(subscribers, null, 2), "utf8");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Subscriber save failed.";
       this.logger.warn(`Telegram subscribers persisted in memory only | cause=${message}`);

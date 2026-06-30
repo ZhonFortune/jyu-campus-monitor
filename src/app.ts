@@ -99,11 +99,6 @@ function getServerlessApp(): Express {
   }
 
   const { logger, powerFeeMonitor, telegramNotifier } = createPowerFeeRuntime();
-  void telegramNotifier.configureWebhook().catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "Telegram webhook configure failed.";
-    logger.error(message);
-  });
-
   serverlessApp = createApp(powerFeeMonitor, logger, telegramNotifier).app;
   return serverlessApp;
 }

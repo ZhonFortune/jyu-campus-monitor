@@ -10,6 +10,7 @@ type ManualCheckBody = {
   schoolAreaNo?: unknown;
   dormBuildingName?: unknown;
   roomNumber?: unknown;
+  captchaCode?: unknown;
 };
 
 function readString(value: unknown): string | undefined {
@@ -63,21 +64,23 @@ function buildLocationOverride(body: ManualCheckBody | undefined): Partial<Power
   return Object.keys(location).length ? location : undefined;
 }
 
+function assertAccessAuthorized(request: Request, body: ManualCheckBody | undefined): void {
+  if (!env.accessToken) {
+    throw new HttpError(503, "ACCESS_TOKEN_NOT_CONFIGURED", "访问令牌未配置。");
+  }
+
+  if (readAccessToken(request, body) !== env.accessToken) {
+    throw new HttpError(401, "UNAUTHORIZED", "访问令牌无效。");
+  }
+}
+
 export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
   const router = Router();
 
   router.post("/powerfee/fetch", async (request, response, next) => {
     try {
       const body = request.body as ManualCheckBody | undefined;
-      const accessToken = readAccessToken(request, body);
-
-      if (!env.accessToken) {
-        throw new HttpError(503, "ACCESS_TOKEN_NOT_CONFIGURED", "访问令牌未配置。");
-      }
-
-      if (accessToken !== env.accessToken) {
-        throw new HttpError(401, "UNAUTHORIZED", "访问令牌无效。");
-      }
+      assertAccessAuthorized(request, body);
 
       const location = buildLocationOverride(body);
       const result = await monitor.runManualCheck({
@@ -92,6 +95,41 @@ export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
         debugPushed: result.debugPushed,
         nextRunAt: result.nextRunAt,
         raw: result.raw
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/powerfee/login/captcha", async (request, response, next) => {
+    try {
+      const body = request.body as ManualCheckBody | undefined;
+      assertAccessAuthorized(request, body);
+
+      const captcha = await monitor.createLoginCaptcha();
+
+      response.status(200).json({
+        captchaImageBase64: captcha.toString("base64"),
+        expiresInSeconds: 600
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/powerfee/login/complete", async (request, response, next) => {
+    try {
+      const body = request.body as ManualCheckBody | undefined;
+      assertAccessAuthorized(request, body);
+      const captchaCode = readString(body?.captchaCode);
+      if (!captchaCode || !/^\d{4}$/.test(captchaCode)) {
+        throw new HttpError(400, "INVALID_CAPTCHA_CODE", "验证码格式无效。");
+      }
+
+      const balance = await monitor.completeLoginCaptcha(captchaCode);
+
+      response.status(200).json({
+        balance
       });
     } catch (error) {
       next(error);

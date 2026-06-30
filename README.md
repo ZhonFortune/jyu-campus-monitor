@@ -11,9 +11,14 @@
 
 </center>
 
-> Vercel Hobby 不支持小时内多次执行的 Cron。服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
-> 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、执行登录并查询一次电费余额；后续定时任务会复用内存登录态，登录态失效时自动重新登录并再次推送验证码。
-> 一卡通接口访问通过 CloudBase 云函数 `china-relay` 作为国内中继节点完成。Vercel 将请求发送到 `CHINA_RELAY_URL`，云函数校验 `CHINA_RELAY_SECRET` 后传透请求与响应数据。
+<br>
+
+## 部分实现原理
+
+1. 服务部署在 Vercel，定时触发由 GitHub Actions 请求 `GET /powerfee/cron` 完成。因此，部署时需要配置 `CRON_SECRET` 环境变量以验证定时调用。
+2. 登录验证码通过 Telegram 发送。首次 `/start` 会注册会话、发送验证码并在用户回复 4 位验证码后完成登录；
+3. 服务使用 Vercel Storage 快速创建的 Neon Postgres 存储登录态、验证码挑战、房间解析缓存、提醒状态和 Telegram 订阅者。
+4. 一卡通接口访问通过 CloudBase 云函数 `china-relay` 作为国内中继节点完成。Vercel 将请求发送到 `CHINA_RELAY_URL`，云函数校验 `CHINA_RELAY_SECRET` 后传透请求与响应数据以避免 Vercel IP 被封禁。
 
 <br>
 
@@ -24,14 +29,14 @@
 3. 准备一卡通登录账号与密码，分别填写 `USERNAME` 和 `PASSWORD`<br>
 4. 使用 [强密钥生成工具](https://onetools.online/zh/token-generator?length=64&uppercase=true&lowercase=true&numbers=true&symbols=true) 生成 `ACCESS_TOKEN`、`CRON_SECRET`、`CHINA_RELAY_SECRET`<br>
 5. 在 CloudBase 中部署 `cloudbase/functions/china-relay` 云函数，并设置 `CHINA_RELAY_SECRET`<br>
-6. 在 Vercel 中创建项目，并设置[环境变量](#环境变量)<br>
+6. 在 Vercel 中创建项目，绑定 Vercel Storage Neon Postgres，并设置[环境变量](#环境变量)<br>
 7. 向 Telegram 机器人发送 `/start`，根据图片输入 4 位验证码，完成登录并获取首次电费余额<br>
 8. 在自己仓库的 Settings -> Secrets and variables > Actions > Repository secrets 中设置 `CRON_URL` 与 `CRON_SECRET` 两个变量<br>
 > `CRON_URL` 为 Vercel 定时触发地址，例如 `https://jyu-campus-monitor.vercel.app/powerfee/cron` <br> `CRON_SECRET` 需要与 Vercel 项目中的 `CRON_SECRET` 变量值一致
 
 <br>
 
-随后 Deploy 项目即可。<strong>服务启动后不会自动登录；登录入口统一为 Telegram `/start` 登陆后将会保存登录状态，除非服务重启否则无需重新登录</strong>
+<strong>服务启动后不会自动登录；<br>登录入口统一为 Telegram `/start` <br>服务拉起后需到 Vercel > Storage 选择 Neon Postgres 创建数据库<br>环境变量会自动注入随后重新部署即可</strong>
 
 <br>
 
@@ -42,14 +47,17 @@
 | `PORT` | 本地服务端口 | `6888` | 否 |
 | `LOG_LEVEL` | 日志级别：`DEBUG`、`INFO`、`WARN`、`ERROR` | `INFO` | 否 |
 | `CORS_ORIGIN` | 跨域来源 | `*` | 否 |
-| `USE_CN_PROXY` | 是否通过 CloudBase 国内中继访问一卡通接口 | `false` | 建议设置为 `true` |
-| `CHINA_RELAY_URL` | CloudBase `china-relay` 云函数 HTTP 访问地址 | 无 | 使用中继时必填 |
+| `USE_CN_PROXY` | 是否启用中转代理,建议设置为 `true` | `false` | 否 |
+| `CHINA_RELAY_URL` | 中转 HTTP 访问地址 | 无 | 使用中继时必填 |
 | `CHINA_RELAY_SECRET` | Vercel 与 CloudBase 云函数之间的共享鉴权密钥 | 无 | Vercel 与 CloudBase 必填且值相同 |
 | `ACCESS_TOKEN` | 手动调试接口访问令牌 | 无 | 否 |
 | `CRON_SECRET` | 定时调用 `/powerfee/cron` 的鉴权密钥 | 无 | Vercel 与 GitHub Actions 必填 |
 | `TELEGRAM_BOT_TOKEN` | Telegram 机器人访问密钥 | 无 | 启用通知必填 |
 | `TELEGRAM_WEBHOOK_URL` | Telegram Webhook 外部地址。Vercel 部署时默认读取 `VERCEL_URL`，本地轮询模式无需填写 | 无 | 否 |
 | `TELEGRAM_WEBHOOK_SECRET` | Telegram Webhook 请求校验密钥。公网 Webhook 建议配置 | 无 | 否 |
+| `TELEGRAM_CHAT_IDS` | 固定 Telegram 推送目标，多个 ID 使用英文逗号分隔 | 无 | 否 |
+| `POSTGRES_URL` | Vercel Storage Neon Postgres 连接地址。Vercel 绑定 Storage 后自动注入 | 无 | Vercel 必填 |
+| `SERVERLESS_STATE_SECRET` | Serverless 状态加密密钥，用于加密登录态和验证码挑战 | 无 | Vercel 建议必填 |
 | `USERNAME` | 一卡通登录账号 | 无 | 是 |
 | `PASSWORD` | 一卡通登录密码 | 无 | 是 |
 | `POWER_FEE_REMIND_THRESHOLD` | 首次提醒阈值，单位：元 | `20` | 否 |
@@ -87,7 +95,9 @@ CloudBase 云函数需设置：
 | `/start` | 注册 Telegram 会话。未登录时发送验证码图片，登录成功后缓存凭证并返回当前电费状态。已登录时直接返回“电费提醒已就绪”状态。 |
 | `/left` | 未登录时提示先发送 `/start`。已登录时查询当前电费余额。 |
 
-定时任务只在已有内存登录态后执行。若查询时发现登录态失效，服务会清理旧凭证、重新登录、重新发送验证码，并在登录成功后继续本次查询与阈值提醒。
+Vercel Serverless 环境不会在单次请求中等待用户回复验证码。`/start` 负责生成验证码并将登录挑战写入 Neon Postgres；用户回复验证码后，新的 Webhook 请求会完成登录并保存登录态。
+
+定时任务只在已有持久化登录态后执行。若查询时发现登录态失效，服务会清理旧凭证，并要求重新通过 Telegram `/start` 完成验证码登录。
 
 <br>
 
@@ -96,6 +106,8 @@ CloudBase 云函数需设置：
 以下用例假设服务已运行在默认地址 `http://localhost:6888` 上，并且 `.env` 中已配置有效的 `ACCESS_TOKEN`、一卡通账号密码、宿舍栋名称和房间号。调试推送需要配置 `TELEGRAM_BOT_TOKEN` 并向机器人发送 `/start` 完成登录。
 
 本地运行使用 Telegram long polling，不需要配置 `TELEGRAM_WEBHOOK_URL` 和 `TELEGRAM_WEBHOOK_SECRET`。
+
+本地未配置 `POSTGRES_URL` 时，状态会自动退回内存存储；Vercel 部署需使用 Neon Postgres 持久化状态。
 
 ```bash
 npm run dev
@@ -147,6 +159,26 @@ curl -X POST "http://localhost:6888/powerfee/fetch" \
     "dormBuildingName": "宿舍栋",
     "roomNumber": "房间号"
   }'
+```
+
+### 5. 手动建立 Serverless 登录态
+
+申请验证码。响应中的 `captchaImageBase64` 为验证码图片 Base64。
+
+```bash
+curl -X POST "http://localhost:6888/powerfee/login/captcha" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -d '{}'
+```
+
+提交 4 位验证码并保存登录态。
+
+```bash
+curl -X POST "http://localhost:6888/powerfee/login/complete" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -d '{"captchaCode":"1234"}'
 ```
 
 <br>

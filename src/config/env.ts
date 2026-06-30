@@ -143,6 +143,7 @@ export const env = {
   telegramWebhookUrl: parseOptionalString("TELEGRAM_WEBHOOK_URL") ?? parseDefaultTelegramWebhookUrl(),
   telegramWebhookSecret: parseOptionalString("TELEGRAM_WEBHOOK_SECRET"),
   telegramChatIds: parseOptionalStringList("TELEGRAM_CHAT_IDS"),
+  serverlessStateSecret: parseOptionalString("SERVERLESS_STATE_SECRET"),
   useCnProxy: parseBoolean("USE_CN_PROXY", false),
   chinaRelayUrl: parseOptionalHttpUrl("CHINA_RELAY_URL"),
   chinaRelaySecret: parseOptionalString("CHINA_RELAY_SECRET"),

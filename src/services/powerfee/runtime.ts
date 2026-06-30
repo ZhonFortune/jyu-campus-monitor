@@ -21,7 +21,15 @@ export function createPowerFeeRuntime(logger = new Logger(env.logLevel)) {
   const powerFeeMonitor = new PowerFeeMonitor(powerFeeClient, telegramNotifier, logger);
 
   telegramNotifier.setBalanceProvider(() => powerFeeMonitor.getCurrentBalance());
-  telegramNotifier.setLoginProvider(() => powerFeeMonitor.getCurrentBalance(), () => powerFeeMonitor.isSessionReady());
+  telegramNotifier.setLoginProvider(
+    () => powerFeeMonitor.getCurrentBalance(),
+    () => powerFeeMonitor.isSessionReady(),
+    () => powerFeeClient.createLoginChallenge(),
+    async (captchaCode) => {
+      await powerFeeClient.completeLoginChallenge(captchaCode);
+      return powerFeeMonitor.getCurrentBalance();
+    }
+  );
 
   return {
     logger,

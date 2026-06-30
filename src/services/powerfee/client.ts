@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { env } from "../../config/env.js";
 import { HttpError } from "../../shared/error.js";
 import type { Logger } from "../../shared/logger.js";
+import { deleteState, getState, setState } from "../../shared/state-store.js";
 import { requestThroughChinaRelay } from "../proxy/relay.js";
 
 const YKT_ORIGIN = "https://yktportal.jyu.edu.cn";
@@ -12,6 +13,11 @@ const BALANCE_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getBalance";
 const ROOM_INFO_URL = "https://yktportal.jyu.edu.cn/user/powerfee/getRoomInfo";
 const REQUEST_TIMEOUT_MS = 15_000;
 const RESPONSE_PREVIEW_LIMIT = 800;
+const SESSION_STATE_KEY = "powerfee:ykt-session";
+const LOGIN_CHALLENGE_STATE_KEY = "powerfee:ykt-login-challenge";
+const SESSION_TTL_MS = 1000 * 60 * 60 * 6;
+const LOGIN_CHALLENGE_TTL_MS = 1000 * 60 * 10;
+const ROOM_INFO_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const WECHAT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541a1f) XWEB/25047 miniProgram/wx84ddfd51a823dc58";
 
@@ -26,14 +32,19 @@ export type PowerFeeBalance = {
   raw: unknown;
 };
 
-type ResolvedRoomInfo = {
+export type ResolvedRoomInfo = {
   buildingNo: string;
   roomId: string;
 };
 
-type YktSession = {
+export type YktSession = {
   token: string;
   cookieHeader: string;
+};
+
+type YktLoginChallenge = {
+  cookieHeader: string;
+  encryptedPassword: string;
 };
 
 type YktHttpResponse = {
@@ -82,6 +93,17 @@ class CookieJar {
       const [pair] = setCookie.split(";");
       const separator = pair?.indexOf("=") ?? -1;
       if (!pair || separator <= 0) {
+        continue;
+      }
+
+      this.cookies.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+    }
+  }
+
+  addFromCookieHeader(cookieHeader: string): void {
+    for (const pair of cookieHeader.split(";")) {
+      const separator = pair.indexOf("=");
+      if (separator <= 0) {
         continue;
       }
 
@@ -367,6 +389,129 @@ async function createYktSession(
   };
 }
 
+async function createYktLoginChallenge(logger: Logger, requestClient: YktRequestClient): Promise<{ challenge: YktLoginChallenge; captcha: Buffer }> {
+  const jar = new CookieJar();
+
+  const loginPage = await requestClient.request(LOGIN_PAGE_URL, {
+    headers: createBaseHeaders(),
+    redirect: "manual"
+  });
+  jar.addFromSetCookieHeaders(loginPage.setCookieHeaders);
+
+  if (loginPage.status < 200 || loginPage.status >= 400) {
+    throw new HttpError(loginPage.status, "YKT_LOGIN_PAGE_FAILED", "登录页访问失败。");
+  }
+
+  const rsaResponse = await requestClient.request(LOGIN_RSA_URL, {
+    headers: {
+      ...createBaseHeaders(jar.toHeader()),
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: LOGIN_PAGE_URL
+    }
+  });
+  jar.addFromSetCookieHeaders(rsaResponse.setCookieHeaders);
+  const rsaText = rsaResponse.text;
+  const rsaPayload = parseLoginJson(rsaText) as RsaResponse;
+  if (rsaResponse.status < 200 || rsaResponse.status >= 300 || rsaPayload.code !== 200 || !rsaPayload.pubKey) {
+    logger.error(`YKT login RSA request failed | status=${rsaResponse.status} | body=${previewResponseBody(rsaText)}`);
+    throw new HttpError(502, "YKT_LOGIN_RSA_FAILED", "登录密钥获取失败。");
+  }
+
+  const encryptedPassword = encryptPassword(env.password, rsaPayload.pubKey);
+  const captchaResponse = await requestClient.request(`${YKT_ORIGIN}/sso/captchaCode?v=${Date.now()}`, {
+    headers: {
+      ...createBaseHeaders(jar.toHeader()),
+      Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      Referer: LOGIN_PAGE_URL
+    }
+  });
+  jar.addFromSetCookieHeaders(captchaResponse.setCookieHeaders);
+
+  if (captchaResponse.status < 200 || captchaResponse.status >= 300) {
+    throw new HttpError(captchaResponse.status, "YKT_CAPTCHA_REQUEST_FAILED", "验证码获取失败。");
+  }
+
+  return {
+    challenge: {
+      cookieHeader: jar.toHeader(),
+      encryptedPassword
+    },
+    captcha: captchaResponse.body
+  };
+}
+
+async function completeYktLoginChallenge(
+  logger: Logger,
+  requestClient: YktRequestClient,
+  challenge: YktLoginChallenge,
+  captchaCode: string
+): Promise<YktSession> {
+  const jar = new CookieJar();
+  jar.addFromCookieHeader(challenge.cookieHeader);
+  const loginBody = new URLSearchParams({
+    loginType: "rftSigner",
+    plat: "",
+    account: env.username,
+    password: challenge.encryptedPassword,
+    captchaCode,
+    needBind: "",
+    bindPlatform: "",
+    openid: "",
+    unionid: "",
+    alipayUserid: "",
+    ddUserid: "",
+    t: "5",
+    renter: ""
+  });
+
+  const submitResponse = await requestClient.request(LOGIN_SUBMIT_URL, {
+    method: "POST",
+    headers: {
+      ...createBaseHeaders(challenge.cookieHeader),
+      "X-Requested-With": "XMLHttpRequest",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Origin: YKT_ORIGIN,
+      Referer: LOGIN_PAGE_URL
+    },
+    body: loginBody
+  });
+  jar.addFromSetCookieHeaders(submitResponse.setCookieHeaders);
+  const submitText = submitResponse.text;
+  const submitPayload = parseLoginJson(submitText) as LoginResponse;
+
+  if (submitResponse.status < 200 || submitResponse.status >= 300 || submitPayload.code !== 200 || !submitPayload.token) {
+    logger.error(
+      [
+        "YKT login failed",
+        `status=${submitResponse.status}`,
+        `code=${submitPayload.code ?? "unknown"}`,
+        `msg=${submitPayload.msg ?? "unknown"}`,
+        `body=${previewResponseBody(submitText)}`
+      ].join(" | ")
+    );
+    throw new HttpError(502, "YKT_LOGIN_FAILED", "一卡通登录失败。");
+  }
+
+  jar.set("token", submitPayload.token);
+  const callbackUrl = `${YKT_ORIGIN}/user/powerfee/index?from=wxminiprogram&token=${encodeURIComponent(submitPayload.token)}`;
+  const callbackResponse = await requestClient.request(callbackUrl, {
+    headers: createBaseHeaders(jar.toHeader()),
+    redirect: "manual"
+  });
+  jar.addFromSetCookieHeaders(callbackResponse.setCookieHeaders);
+
+  if (callbackResponse.status < 200 || callbackResponse.status >= 400) {
+    logger.error(`YKT login callback failed | status=${callbackResponse.status}`);
+    throw new HttpError(502, "YKT_LOGIN_CALLBACK_FAILED", "登录回调失败。");
+  }
+
+  logger.info("YKT login completed");
+  return {
+    token: submitPayload.token,
+    cookieHeader: jar.toHeader()
+  };
+}
+
 async function postYktForm(
   requestClient: YktRequestClient,
   session: YktSession,
@@ -500,6 +645,24 @@ export class PowerFeeClient {
     return this.session !== null;
   }
 
+  async createLoginChallenge(): Promise<Buffer> {
+    const { challenge, captcha } = await createYktLoginChallenge(this.logger, this.requestClient);
+    await setState(LOGIN_CHALLENGE_STATE_KEY, challenge, { ttlMs: LOGIN_CHALLENGE_TTL_MS });
+    return captcha;
+  }
+
+  async completeLoginChallenge(captchaCode: string): Promise<void> {
+    const challenge = await getState<YktLoginChallenge>(LOGIN_CHALLENGE_STATE_KEY);
+    if (!challenge?.cookieHeader || !challenge.encryptedPassword) {
+      throw new HttpError(409, "YKT_LOGIN_CHALLENGE_EXPIRED", "验证码已过期，请重新获取。");
+    }
+
+    const session = await completeYktLoginChallenge(this.logger, this.requestClient, challenge, captchaCode);
+    this.session = session;
+    await setState(SESSION_STATE_KEY, session, { ttlMs: SESSION_TTL_MS });
+    await deleteState(LOGIN_CHALLENGE_STATE_KEY);
+  }
+
   async getBalance(location: PowerFeeLocation): Promise<PowerFeeBalance> {
     const schoolAreaNo = normalizeQueryValue("schoolAreaNo", location.schoolAreaNo);
     const session = await this.ensureSession();
@@ -511,7 +674,7 @@ export class PowerFeeClient {
       }
 
       this.logger.warn("YKT session expired; refreshing session.");
-      this.clearSession();
+      await this.clearSession();
       const refreshedSession = await this.ensureSession();
       return this.getBalanceWithSession(location, schoolAreaNo, refreshedSession);
     }
@@ -584,10 +747,21 @@ export class PowerFeeClient {
       return this.session;
     }
 
+    const persistedSession = await getState<YktSession>(SESSION_STATE_KEY);
+    if (persistedSession?.token && persistedSession.cookieHeader) {
+      this.session = persistedSession;
+      return persistedSession;
+    }
+
+    if (process.env.VERCEL) {
+      throw new HttpError(409, "YKT_LOGIN_REQUIRED", "登录态未建立，请先完成验证码登录。");
+    }
+
     if (!this.sessionPromise) {
       this.sessionPromise = createYktSession(this.logger, this.requestClient, this.captchaResolver)
-        .then((session) => {
+        .then(async (session) => {
           this.session = session;
+          await setState(SESSION_STATE_KEY, session, { ttlMs: SESSION_TTL_MS });
           return session;
         })
         .finally(() => {
@@ -598,10 +772,11 @@ export class PowerFeeClient {
     return this.sessionPromise;
   }
 
-  private clearSession(): void {
+  private async clearSession(): Promise<void> {
     this.session = null;
     this.sessionPromise = null;
     this.roomInfoCache.clear();
+    await deleteState(SESSION_STATE_KEY);
   }
 
   private async resolveRoom(location: PowerFeeLocation, session: YktSession): Promise<ResolvedRoomInfo> {
@@ -613,6 +788,12 @@ export class PowerFeeClient {
 
     if (cached) {
       return cached;
+    }
+
+    const persistedRoom = await getState<ResolvedRoomInfo>(buildRoomInfoStateKey(cacheKey));
+    if (persistedRoom?.buildingNo && persistedRoom.roomId) {
+      this.roomInfoCache.set(cacheKey, persistedRoom);
+      return persistedRoom;
     }
 
     try {
@@ -661,6 +842,7 @@ export class PowerFeeClient {
       }
 
       this.roomInfoCache.set(cacheKey, resolvedRoom);
+      await setState(buildRoomInfoStateKey(cacheKey), resolvedRoom, { ttlMs: ROOM_INFO_TTL_MS });
       return resolvedRoom;
     } catch (error) {
       if (error instanceof HttpError) {
@@ -677,6 +859,10 @@ export class PowerFeeClient {
       throw new HttpError(502, "ROOM_INFO_REQUEST_ERROR", "房间索引查询异常。");
     }
   }
+}
+
+function buildRoomInfoStateKey(cacheKey: string): string {
+  return `powerfee:room-info:${cacheKey}`;
 }
 
 function findRoomInfo(payload: unknown, dormBuildingName: string, roomNumber: string): ResolvedRoomInfo | null {
