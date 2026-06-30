@@ -54,4 +54,4 @@ jobs:
           test -n "$TENCENT_SECRET_KEY"
           test -n "$CLOUDBASE_ENV_ID"
           npx -y --package @cloudbase/cli@3.5.9 tcb login --apiKeyId "$TENCENT_SECRET_ID" --apiKey "$TENCENT_SECRET_KEY"
-          npx -y --package @cloudbase/cli@3.5.9 tcb fn deploy china-relay --dir cloudbase/functions/china-relay --httpFn --force --yes --env-id "$CLOUDBASE_ENV_ID"
+          yes y | npx -y --package @cloudbase/cli@3.5.9 tcb fn deploy china-relay --dir cloudbase/functions/china-relay --httpFn --force --yes --env-id "$CLOUDBASE_ENV_ID"
