@@ -156,15 +156,6 @@ export function createPowerFeeRouter(monitor: PowerFeeMonitor) {
         nextRunAt: result.nextRunAt
       });
     } catch (error) {
-      if (error instanceof HttpError && error.code === "YKT_LOGIN_REQUIRED") {
-        response.status(200).json({
-          status: "skipped",
-          reason: "login_required",
-          message: "登录态未建立，请先通过 Telegram /start 完成验证码登录。"
-        });
-        return;
-      }
-
       next(error);
     }
   });

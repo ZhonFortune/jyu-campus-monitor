@@ -15,7 +15,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const RESPONSE_PREVIEW_LIMIT = 800;
 const SESSION_STATE_KEY = "powerfee:ykt-session";
 const LOGIN_CHALLENGE_STATE_KEY = "powerfee:ykt-login-challenge";
-const SESSION_TTL_MS = 1000 * 60 * 60 * 6;
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const LOGIN_CHALLENGE_TTL_MS = 1000 * 60 * 10;
 const ROOM_INFO_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const WECHAT_USER_AGENT =
@@ -51,6 +51,7 @@ type YktHttpResponse = {
   status: number;
   statusText: string;
   headers: Map<string, string>;
+  setCookieHeaders: string[];
   text: string;
 };
 
@@ -535,6 +536,7 @@ async function postYktForm(
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
+      setCookieHeaders: response.setCookieHeaders,
       text
     },
     text,
@@ -675,6 +677,9 @@ export class PowerFeeClient {
 
       this.logger.warn("YKT session expired; refreshing session.");
       await this.clearSession();
+      if (process.env.VERCEL) {
+        throw new HttpError(401, "YKT_SESSION_EXPIRED", "登录已过期，请使用 /start 重新登录");
+      }
       const refreshedSession = await this.ensureSession();
       return this.getBalanceWithSession(location, schoolAreaNo, refreshedSession);
     }
@@ -701,6 +706,8 @@ export class PowerFeeClient {
           token: ""
         })
       );
+
+      await this.refreshSessionCookies(session, response.setCookieHeaders);
 
       if (isSessionExpiredResponse(response, text, payload)) {
         throw new HttpError(401, "YKT_SESSION_EXPIRED", "登录态已失效。");
@@ -754,7 +761,7 @@ export class PowerFeeClient {
     }
 
     if (process.env.VERCEL) {
-      throw new HttpError(409, "YKT_LOGIN_REQUIRED", "登录态未建立，请先完成验证码登录。");
+      throw new HttpError(401, "YKT_LOGIN_REQUIRED", "登录已过期，请使用 /start 重新登录");
     }
 
     if (!this.sessionPromise) {
@@ -777,6 +784,26 @@ export class PowerFeeClient {
     this.sessionPromise = null;
     this.roomInfoCache.clear();
     await deleteState(SESSION_STATE_KEY);
+  }
+
+  private async refreshSessionCookies(session: YktSession, setCookieHeaders: string[]): Promise<YktSession> {
+    if (setCookieHeaders.length === 0) {
+      return session;
+    }
+
+    const jar = new CookieJar();
+    jar.addFromCookieHeader(session.cookieHeader);
+    jar.addFromSetCookieHeaders(setCookieHeaders);
+    const refreshedSession: YktSession = {
+      token: session.token,
+      cookieHeader: jar.toHeader()
+    };
+
+    session.cookieHeader = refreshedSession.cookieHeader;
+    this.session = refreshedSession;
+    await setState(SESSION_STATE_KEY, refreshedSession, { ttlMs: SESSION_TTL_MS });
+    this.logger.info("YKT session cookies refreshed.");
+    return refreshedSession;
   }
 
   private async resolveRoom(location: PowerFeeLocation, session: YktSession): Promise<ResolvedRoomInfo> {
@@ -808,6 +835,8 @@ export class PowerFeeClient {
           buyMark: ""
         })
       );
+
+      await this.refreshSessionCookies(session, response.setCookieHeaders);
 
       if (isSessionExpiredResponse(response, text, payload)) {
         throw new HttpError(401, "YKT_SESSION_EXPIRED", "登录态已失效。");

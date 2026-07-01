@@ -571,6 +571,11 @@ export class TelegramNotifier {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Balance query failed.";
       this.logger.error(`Telegram command failed | command=/left | chatId=${chatId} | cause=${message}`);
+      if (error instanceof HttpError && (error.code === "YKT_LOGIN_REQUIRED" || error.code === "YKT_SESSION_EXPIRED")) {
+        await bot.telegram.sendMessage(chatId, "登录已过期，请使用 /start 重新登录");
+        return;
+      }
+
       await bot.telegram.sendMessage(chatId, "当前电费余额查询失败");
     }
   }
